@@ -1,6 +1,16 @@
+#!/usr/bin/env python
+
 import argparse 
 import os 
 from jinja2 import Environment, PackageLoader 
+
+__author__ = 'John Joseph Horton, utapyngo'
+__copyright__ = 'Copyright (C) 2012  John Joseph Horton'
+__license__ = 'GPL v3'
+__maintainer__ = 'johnjosephhorton'
+__email__ = 'john.joseph.horton@gmail.com'
+__status__ = 'Development'
+__version__ = '0.1'
 
 env = Environment(loader=PackageLoader('gawande', 'checklists'))
 
@@ -27,7 +37,7 @@ def main():
             print(checklist_text)
     else: 
         print("""\nAvailable checklists:\n---------------------""")
-        for checklist in os.listdir(os.path.join(os.getcwd(), "checklists")):           
+        for checklist in os.listdir("./checklists"):           
             print("\t " + checklist.replace(".md", ""))
         print("\n\nTo see checklist, run gawande.py --checklist CHECKLIST_NAME")
           

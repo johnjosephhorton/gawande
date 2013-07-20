@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 from setuptools import setup
 from os.path import join, dirname
 
@@ -28,3 +31,4 @@ setup(name='gawande',
       ),
       install_requires=['Jinja2>=2.6'],
       )
+

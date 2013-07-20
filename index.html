@@ -1,0 +1,3876 @@
+<html>
+<head>
+ 
+ <link href="http://ajax.googleapis.com/ajax/libs/jqueryui/1.8/themes/base/jquery-ui.css" rel="stylesheet" type="text/css"/>
+ <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.5/jquery.min.js"></script>
+ <script src="http://ajax.googleapis.com/ajax/libs/jqueryui/1.8/jquery-ui.min.js"></script>
+
+<style>
+p.OK{color:green}
+p.REFACTOR{color:orange}
+p.BAD{color:red}
+</style>
+  
+<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.5/jquery.min.js"></script>
+<script src="http://ajax.googleapis.com/ajax/libs/jqueryui/1.8/jquery-ui.min.js"></script>
+<script>
+  $(document).ready(function() {
+     $("#contractor_accordion").accordion({autoHeight:false, collapsible: true});
+     $("#client_accordion").accordion({autoHeight:false, collapsible: true});
+     $("#market_accordion").accordion({autoHeight:false, collapsible: true});
+     $("#utilities_accordion").accordion({autoHeight:false, collapsible: true});
+  });
+</script>
+</head>
+<body>
+ 
+    <h1>contractor</h1>
+    <div id="contractor_accordion">
+    
+    <h3><a href="#"><p class="OK">contractor_composition_education.sql</p> creates: ['analytics.contractor_education']</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "OK", 
+ "PURPOSE": """Create a table of a contractor's total education records.""", 
+ "NOTES": """If you want to map these to years, Masters:18, Bacherlors:16, 
+             High School:12, Doctorate:21, Diploma:16  """,
+ "CREATES":['analytics.contractor_education'], 
+ "DEPENDS":['analytics.test', 'analytics.test2']
+}
+*/
+
+drop table if exists analytics.contractor_education; 
+create table analytics.contractor_education as 
+select 
+ contractor
+,sum(case when er."Degree" = 'Masters' then 1 else 0 end) as masters 
+,sum(case when er."Degree" = 'Bachelors' then 1 else 0 end) as bachelors 
+,sum(case when er."Degree" = 'High School' then 1 else 0 end) as high_school 
+,sum(case when er."Degree" = 'Doctorate' then 1 else 0 end) as doctorate
+,sum(case when er."Degree" = 'Diploma' then 1 else 0 end) as diploma 
+,sum(case when er."Record ID#" is null then 1 else 0 end) as missing_education_records
+from agg.b_contractor as c
+left join "oDesk DB"."Education Records" as er 
+on er."Related Developer" = c.contractor 
+group by contractor 
+distributed by(contractor); 
+
+
+
+
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="BAD">contractor_composition_gender.sql</p> creates: ['analytics.contractor_gender']</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "BAD", 
+ "PURPOSE": """Create a table of Contractor's inferred gender """, 
+ "NOTES": """ """,
+ "CREATES": ['analytics.contractor_gender'],
+ "DEPENDS": [],  
+ "SETUP_SCRIPT": True
+}
+*/
+
+drop table if exists analytics.contractor_gender; 
+create table analytics.contractor_gender as
+select
+ "Record ID#" as contractor 
+,"First Name" as first_name
+, g."Gender" as gender    
+from "oDesk DB"."Developers" as d
+left join names_to_gender as g 
+on lower(trim(both ' ' from g."Name")) = lower("First Name") 
+distributed by(contractor); 
+
+-- How are we doing? 
+select count(*), gender from analytics.contractor_gender group by gender; 
+
+-- What do no matches look like? 
+select * from analytics.contractor_gender where gender is null limit 100; 
+
+-- Top 100 missing gender names 
+select first_name, count(*) as num_missing 
+from (
+     select * from analytics.contractor_gender where gender is null) as nogender
+group by first_name 
+order by num_missing desc limit 100; 
+
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="REFACTOR">contractor_composition_offlinework.sql</p> creates: ['analytics.contractor_work_experiences', 'analytics.contractor_experiences']</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "REFACTOR", 
+ "PURPOSE": """Create a table of a contractor's outside work experiences.""", 
+ "NOTES": """ """,
+ "CREATES":['analytics.contractor_work_experiences', 'analytics.contractor_experiences'], 
+ "DEPENDS":[]
+}
+*/
+
+drop table if exists analytics.contractor_work_experience; 
+create table analytics.contractor_work_experience as 
+select
+   contractor  
+   ,sum(delta)/365.0 as years_exper 
+   ,count(*) as num_expers  
+from (
+    select 
+     "Related Developer" AS contractor 
+     ,EXTRACT (days FROM to_timestamp("EndDate"/1000) - to_timestamp("StartDate"/1000)) AS delta 
+     from "oDesk DB"."Work Experiences"
+    ) as t 
+where delta > 0.0 
+group by contractor; 
+
+drop table if exists analytics.contractor_experiences; 
+create table analytics.contractor_experiences as
+select 
+"Related Developer" as contractor 
+, "Record ID#" as exper_id
+, to_timestamp("EndDate"/1000) as end_date 
+, to_timestamp("StartDate"/1000) as start_date 
+, extract(days from to_timestamp("EndDate"/1000) - to_timestamp("StartDate"/1000)) as duration  
+from "oDesk DB"."Work Experiences" 
+distributed by(contractor);
+    </pre></div>
+    
+    <h3><a href="#"><p class="OK">contractor_composition_profile_picture.sql</p> creates: ['analytics.has_picture']</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "OK",
+ "NOTES": """  """,
+ "PURPOSE": """Does a contractor currently have a picture?""",
+ "CREATES":['analytics.has_picture'],
+ "DEPENDS":[]
+}
+*/
+
+drop table if exists analytics.has_picture cascade;
+create table analytics.has_picture as
+select
+  u."Related Developer" as contractor
+, case when "PortraitUrl" is null then 0 else 1 end as has_picture
+from "oDesk DB"."Users" as u
+distributed by(contractor); 
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="REFACTOR">contractor_composition_skills.sql</p> creates: ['datasets.skills_montly_panel', 'datasets.skill_supply', 'datasets.skill_attributes']</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "REFACTOR", 
+ "PURPOSE":"""Datasets related to skills, from January 2012 onwards.""", 
+ "NOTES": """ Wage information should be re-factored to use other analytics tables.""",
+ "CREATES":['datasets.skills_montly_panel', 'datasets.skill_supply', 'datasets.skill_attributes'], 
+ "DEPENDS":['analytics.parent_openings'],
+ "SETUP_SCRIPT":True
+}
+*/
+
+drop table if exists skill_info; 
+create temp table skill_info as 
+select 
+  ja.application
+, ja.createdtype
+, ja.interview_date 
+, ja.amount 
+, ja.hr_charge_rate 
+, ja.status
+, ja.contractor
+, po.employer 
+, po.economic_opening 
+, extract(month from po.opening_date) as month
+, extract(year from po.opening_date) as year
+, extract(week from po.opening_date) as week 
+, regexp_split_to_table(o."Required Skills", E',') as skill  
+from analytics.parent_openings as po
+left join agg.b_job_application as ja
+on ja.opening = po.opening 
+left join "oDesk DB"."Openings" as o 
+on o."Record ID#" = po.opening 
+where po.opening_date > '2012-01-01'; 
+
+drop table if exists datasets.skill_monthly_panel; 
+create table datasets.skill_monthly_panel as  
+select * from (
+select 
+  month
+, week
+, year 
+, skill 
+, sum(case when createdtype = 'professional' then 1 else 0 end) as organic_applications
+, count(distinct(economic_opening)) as vacancies 
+, count(distinct(contractor)) as contractors 
+, sum(case when status = 'filled' then 1 else 0 end) as num_filled 
+from skill_info 
+group by month, year, skill, week) as foo
+where vacancies > 100
+distributed by(skill);
+ 
+create table datasets.skill_supply as 
+select
+ skills."Skill" as skill
+,AVG(LOG(devs."Hourly Rate")) as avg_log_profile_wage
+,stddev(LOG(devs."Hourly Rate")) as stddev_log_profile_wage
+,AVG(devs."Hourly Rate") as avg_profile_wage 
+,stddev(devs."Hourly Rate") as stdev_profile_wage 
+,COUNT(*) as num_devs
+from "oDesk DB"."Skills" as skills 
+left join "oDesk DB"."DeveloperSkills" as devskills
+on devskills."SkillRef" = skills."Record ID#" 
+left join "oDesk DB"."Developers" as devs
+on devs."Record ID#" = devskills."Developer"
+where skills."Notes" = 'Babel' and 
+devs."Hourly Rate" >= 0.25 and devs."Hourly Rate" <= 150.0 
+group by skill order by num_devs desc;
+
+drop table if exists datasets.skill_attributes; 
+create table datasets.skill_attributes as
+select 
+    skill
+    ,count(*) as num_openings 
+    ,sum(case when hourly_rate is not null then 1 else 0 end) as num_filled
+    ,sum(hours) as total_hours
+    ,sum(hours * hourly_rate) as total_earnings
+    ,count(distinct(contractor)) as num_distinct_contractors  
+    ,case when sum(hours) > 0.0 then sum(hours * hourly_rate)/sum(hours) else null end as mean_wage  
+    ,min(hourly_rate) as min_rate 
+    ,max(hourly_rate) as max_rate 
+    ,stddev(hourly_rate) as stdev_hourly_rate 
+    ,avg(hired_contractor_hourly_profile_rate) as mean_hired_contractor_profile_hourly_rate 
+from(    
+   select 
+   regexp_split_to_table(dirty_o."Required Skills", E',') as skill  
+   , asg.hr_rate as hourly_rate 
+   , asg.hours as hours
+   , asg.contractor 
+   , c."Hourly Rate" as hired_contractor_hourly_profile_rate
+   from agg.c_opening as clean_o
+   left join "oDesk DB"."Openings" as dirty_o
+   on dirty_o."Record ID#" = clean_o.opening  
+   left join agg.b_assignment as asg 
+   on asg.opening = clean_o.opening 
+   left join "oDesk DB"."Developers" as c
+   on c."Record ID#" = asg.contractor 
+   where clean_o.date > '2012-01-02') 
+as t
+inner join "oDesk DB"."Skills" as skills 
+on skills."Skill" = t.skill AND skills."Notes" = 'Babel'
+group by skill
+distributed by(skill);   
+
+drop table if exists datasets.skill_demand; 
+create table datasets.skill_demand as 
+select 
+skill, 
+count(*) as num_openings 
+from (
+      select 
+      regexp_split_to_table(dirty_o."Required Skills", E',') as skill  
+      from agg.c_opening as clean_o
+      left join "oDesk DB"."Openings" as dirty_o
+      on dirty_o."Record ID#" = clean_o.opening  
+      where clean_o.date > '2012-01-02'
+) as t
+inner join "oDesk DB"."Skills" as skills 
+on skills."Skill" = t.skill AND skills."Notes" = 'Babel'
+group by skill
+distributed by(skill); 
+
+drop table if exists datasets.market_for_skills; 
+create table datasets.market_for_skills as 
+select 
+ skill_supply.*
+,skill_demand.num_openings  
+,sa.num_openings as skill_attributes_num_openings
+    ,num_filled
+    ,total_hours
+    ,total_earnings
+    ,num_distinct_contractors  
+    ,mean_wage  
+    ,min_rate 
+    ,max_rate 
+    ,stdev_hourly_rate 
+from datasets.skill_supply as skill_supply 
+join datasets.skill_demand as skill_demand on skill_demand.skill = skill_supply.skill
+left join datasets.skill_attributes sa
+on sa.skill = skill_supply.skill
+distributed by(skill); 
+    </pre></div>
+    
+    <h3><a href="#"><p class="OK">contractor_mkt-behavior_application-skill-relevance.sql</p> creates: ['analytics.skill_based_application_relevance']</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "OK", 
+ "PURPOSE": """Creates a skill-based measure of application relevancy based 
+               solely on past application behavior.""", 
+ "NOTES": """The cosine similarity measure is not perfect. Only runs from Jan 1, 2012 """,
+ "CREATES":['analytics.skill_based_application_relevance'], 
+ "DEPENDS":[],
+ "SETUP_SCRIPT":True
+}
+*/
+
+\set babel_date '2012-07-25';
+
+drop table if exists skills_match; 
+create temp table skills_match as 
+select 
+    contractor
+   , skill
+   , num_applications_per_skill
+   , sum(num_applications_per_skill) over (partition by contractor) as contractor_total 
+from (
+      select 
+         contractor
+	, skill 
+	, count(*) as num_applications_per_skill
+      from (
+	    select 
+	    contractor
+	    , application 
+	    , regexp_split_to_table("Required Skills", E',') as skill
+	    from agg.b_job_application as ja, "oDesk DB"."JobApplications" as odb_ja 
+	    where date > '2012-01-01' 
+	    and ja.application = odb_ja."Record ID#" and ja.createdtype = 'professional'
+	    ) as foo
+      group by contractor, skill) as bar
+distributed by(contractor); 
+
+drop table if exists c_to_j_matchup; 
+create temp table c_to_j_matchup as
+select 
+  foo.contractor
+, foo.application 
+, foo.skill
+, num_applications_per_skill
+, contractor_total
+, count(*) over (partition by application) as num_job_skills
+, sum( (num_applications_per_skill/contractor_total)^2 ) over (partition by foo.contractor) as a_norm 
+from 
+    (select 
+      contractor 
+      ,application 
+      ,regexp_split_to_table("Required Skills", E',') as skill
+      from agg.b_job_application as ja, "oDesk DB"."JobApplications" as odb_ja 
+      where date > '2012-01-01' and 
+      ja.application = odb_ja."Record ID#") as foo
+left join skills_match as s
+on (foo.contractor, foo.skill) = (s.contractor, s.skill)
+distributed by(contractor); 
+
+drop table if exists analytics.skill_based_application_relevance; 
+create table analytics.skill_based_application_relevance as 
+select 
+  application
+, sum(num_applications_per_skill/contractor_total)/(avg(sqrt(a_norm)) * sqrt(avg(num_job_skills))) as cosine_similarity 
+from c_to_j_matchup 
+group by application 
+distributed by(application); 
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="REFACTOR">contractor_mkt-behavior_application-timing.sql</p> creates: ['analytics.candidacy_timing']</a></h3>
+    <div><pre>
+    /*
+{
+"AUTHOR":"John J. Horton", 
+"PURPOSE":"Categorizes all of the openings.",
+"STATUS":"REFACTOR", 
+"NOTES":
+"""
+
+Tests
+- All job applications have a corresponding opening 
+   PASS
+
+ -All applications come after the time stamp for when an opening was created 
+
+- Only one application per worker per economic opening 
+   FAIL - about .5% of contractor-economic opening pairings are not unique. 
+
+""", 
+"CREATES":['analytics.candidacy_timing'], 
+"DEPENDS":['analytics.parent_openings'], 
+"SETUP_SCRIPT":True
+}
+*/
+
+drop table if exists analytics.candidacy_timing; 
+create table analytics.candidacy_timing as
+select 
+    o.opening
+  , o.opening_date as opening_created 
+  , ja."Developer (ref)" as contractor 
+  , ja."Status" as status
+  , o.opening_type
+  , jc."Level1" as level1
+  , jc."Level2" as level2 
+  , case when opening_type = 'original' then original_opening 
+     when opening_type = 'spawn_from_original' then original_opening
+     when opening_type = 'repost' then base_opening_potentially_repost
+     when opening_type = 'spawn_from_repost' then base_opening_potentially_repost
+    end as economic_opening
+ , ja."Record ID#" as application 
+ , to_timestamp(ja."Date Created"/1000) as initiation_date 
+ , ja."CreatedType" as createdtype
+ , to_timestamp(mc."DateDeveloperReplied"/1000) as contractor_interview_decision_timestamp
+ , to_timestamp(mc."DateCompanyReplied"/1000) as employer_interview_decision_timestamp
+ , to_timestamp(mc."DateCommitGranted"/1000) as interview_commit_date
+ , to_timestamp(mco."DateDeveloperReplied"/1000) as contractor_offer_decision_timestamp
+ , to_timestamp(mco."DateCompanyReplied"/1000) as employer_offer_decision_timestamp
+ , to_timestamp(mco."DateCommitGranted"/1000) as offer_commit_date
+ , rank() over (partition by o.economic_opening order by mc."DateDeveloperReplied" asc) 
+  	 as arrival_rank
+ , rank() over (partition by o.economic_opening order by ja."Date Created" asc) 
+  	 as initiation_rank
+from "oDesk DB"."JobApplications" as ja 
+left join analytics.parent_openings as o
+on o.opening = ja."Related Opening"
+left join "oDesk DB"."MutualCommit" as mc
+on mc."Record ID#" = ja."Related Interview MutualCommit"
+left join "oDesk DB"."MutualCommit" as mco
+on mco."Record ID#" = ja."Related Offer MutualCommit"
+join "oDesk DB"."Openings" as odb_o 
+on odb_o."Record ID#" = o.opening 
+join "oDesk DB"."JobCategories" as jc
+on jc."Record ID#" = odb_o."Related JobCategory" 
+distributed by(opening); 
+
+
+-- -- what fraction of JA's are invitations?
+-- select avg(case when createdtype = 'Client' then 1.0 else 0.0 end) from analytics.candidacy_timing; 
+-- -- about 12% of JA's are invitations 
+
+-- -- by category: 
+-- select level1, avg(case when createdtype = 'Client' then 1.0 else 0.0 end) from analytics.candidacy_timing group by level1; 
+
+-- --- hiring by category
+-- select level1, avg(case when status = 'Filled' then 1.0 else 0.0 end) from analytics.candidacy_timing group by level1; 
+
+-- select level1, avg(case when interview_commit_date is not null then 1.0 else 0.0 end) 
+-- from analytics.candidacy_timing group by level1; 
+
+-- select avg(case when createdtype = 'Client' then 1.0 else 0.0 end) from analytics.candidacy_timing; 
+
+-- select avg(case when createdtype = 'Client' then 1.0 else 0.0 end) from analytics.candidacy_timing where status = 'Filled'; 
+-- -- 46\% of hires come from invitations 
+
+-- select avg(case when createdtype = 'Client' then 1.0 else 0.0 end) from analytics.candidacy_timing where status = 'Filled'; 
+
+-- -- what fraction of candidates are interviewed? 
+-- select avg(case when interview_commit_date is not null then 1 else 0 end) from analytics.candidacy_timing; 
+
+-- create temp table arrival_rank_table as 
+-- select 
+-- application
+-- ,case when contractor_offer_decision_timestamp is not null then arrival_rank else null end as new_arrival_rank
+-- from analytics.candidacy_timing
+-- distributed by(application); 
+
+-- --select * from analytics.candidacy_timing where opening is not null order by opening  desc limit 100; 
+
+-- -- how many job applications are missing an associated opening? 
+-- select sum(case when opening_type is null then 1 else 0 end)/(1.0 * count(*)) as frac_ja_missing_opening 
+-- from analytics.candidacy_timing; 
+-- /*
+-- -[ RECORD 1 ]-----------+---------------------------
+-- frac_ja_missing_opening | 0.000000946893219673919379
+-- */
+
+-- drop table if exists apps_per_opening; 
+-- create temp table apps_per_opening as 
+-- select 
+--    economic_opening
+--  , contractor 
+--  , opening_type
+--  , count(*) as num_applications 
+-- from analytics.candidacy_timing
+-- where opening_type is not null  
+-- group by economic_opening, contractor, opening_type
+-- order by num_applications desc; 
+
+-- -- How many types does a contractor have multiple job applications associated with the same opening? 
+-- select sum(case when num_applications > 1 then 1 else 0 end)/(1.0 * count(*)) as frac_bad
+-- from apps_per_opening; 
+
+/*
+-[ RECORD 1 ]--------------------
+frac_bad | 0.00433129583687917569
+*/
+
+/*
+Example of the problem: 
+
+-[ RECORD 1 ]----+--------------------
+economic_opening | 101259860
+contractor       | 378586
+opening_type     | spawn_from_original
+num_applications | 32
+-[ RECORD 2 ]----+--------------------
+economic_opening | 101744494
+contractor       | 51269
+opening_type     | spawn_from_original
+num_applications | 12
+-[ RECORD 3 ]----+--------------------
+economic_opening | 200062658
+contractor       | 1254586
+opening_type     | spawn_from_original
+num_applications | 11
+-[ RECORD 4 ]----+--------------------
+economic_opening | 200233838
+contractor       | 263031
+opening_type     | spawn_from_original
+num_applications | 11
+-[ RECORD 5 ]----+--------------------
+
+
+Let's get the offensing applications for [RECORD 1]
+
+
+*/
+
+-- create temp table problem_apps as 
+-- select * 
+-- from analytics.candidacy_timing 
+-- where contractor = '378586' and 
+-- economic_opening = '101259860';
+
+-- select 
+-- pa.*
+-- , 'http://www.odesk.com/jobs/' || o."ProfileKey" as url
+-- from "oDesk DB"."Openings" as o, problem_apps as pa
+-- where o."Record ID#" = pa.opening
+-- order by opening_created asc; 
+
+
+-- select 
+-- 'http://www.odesk.com/jobs/' || o."ProfileKey" as url
+-- from "oDesk DB"."Openings" as o, problem_apps as pa
+-- where o."Record ID#" = pa.opening
+-- order by opening_created asc; 
+
+    
+    </pre></div>
+    
+    <h3><a href="#"><p class="REFACTOR">contractor_mkt-behavior_cover-letters.sql</p> creates: ['analytics.cover_letter_novelty']</a></h3>
+    <div><pre>
+        /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "REFACTOR", 
+ "PURPOSE": """Create a table of containing each job application and a measure of how 
+               original it is, meaning fraction of the sentences in tha cover letter 
+               were never present in a previous cover letter.""", 
+ "CREATES":['analytics.cover_letter_novelty'], 
+ "NOTES": """ Needs a test function """
+}
+*/
+create temp table eligible_workers as 
+select distinct(contractor) 
+from agg.b_job_application; 
+
+create temp table target_messages as
+select  
+ contractor 
+,ja."Record ID#" AS application 
+,ja."Date Created" AS event_ts 
+,ja."Related AssignmentMessage for Candidate Referral Cover Letter" AS clid
+from "oDesk DB"."JobApplications" AS ja
+inner join eligible_workers
+on ja."Developer (ref)" = contractor 
+and "Related AssignmentMessage for Candidate Referral Cover Letter"  is not null
+distributed by(contractor);
+
+drop table if exists analytics.cover_letter_novelty;
+create table analytics.cover_letter_novelty as 
+select 
+  application
+, avg(case when times_prior > 0 then 0 else 1 end) as frac_original
+from 
+  (
+   select 
+     application
+    ,count(*) over (partition by contractor, sentences order by event_ts) - 1 as times_prior
+   from (
+   	select 
+      	application 
+     	,event_ts 
+     	,contractor 
+     	,regexp_split_to_table(asm."Message", E'\\.') as sentences
+    	from target_messages, "oDesk DB"."AssignmentMessages" AS asm
+    	where asm."Record ID#" = clid
+    	) as messages
+    ) as foo 
+group by application 
+distributed by(application); 
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="BAD">contractor_mkt-behavior_group-membership.sql</p> creates: []</a></h3>
+    <div><pre>
+    /* Candidates */
+\g contract_list.txt
+SELECT 
+ dev."Record ID#" as contractor
+,dev."Last Name" AS last_name
+,dev."First Name" AS first_name
+,dev."AlternateEmail" AS email 
+,'http://www.odesk.com/users/' || "ProfileKey - CfullFfull" AS url
+,opening_skills.skills AS skill
+,COUNT(*) AS job_count
+FROM "oDesk DB"."Developers" AS dev 
+LEFT JOIN "oDesk DB"."Assignments" AS asg
+ON asg."Developer (ref)" = dev."Record ID#" 
+INNER JOIN opening_skills 
+ON opening_skills.opening = asg."Related Opening" 
+AND opening_skills.skills IN ('paypal-integration', 'magento', 'ebay')
+LEFT JOIN "oDesk DB"."Openings" AS open
+ON open."Record ID#" = opening_skills.opening 
+LEFT JOIN "oDesk DB"."JobCategories" AS jc
+ON jc."Record ID#" = open."Related JobCategory" 
+AND jc."Level1" = 'Web Development' 
+WHERE dev."Record ID#" NOT IN (
+  select 
+  gd."Related Developer" as contractor 
+  from "oDesk DB"."GroupDeveloper" gd 
+  join "oDesk DB"."Groups" g 
+  on g."Record ID#" = gd."Related Group" 
+  where gd."Related Group" IN ('92', '41', '42')
+  )
+GROUP BY contractor, last_name, first_name, email, url, skill
+ORDER BY "Last Name" ASC
+
+
+
+
+SELECT 
+ dev."Record ID#" 
+,opening_skills.skills
+FROM "oDesk DB"."Developers" AS dev 
+LEFT JOIN "oDesk DB"."Assignments" AS asg
+ON asg."Developer (ref)" = dev."Record ID#" 
+INNER JOIN opening_skills 
+ON opening_skills.opening = asg."Related Opening" 
+AND opening_skills.skills = 'paypal-integration'
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="REFACTOR">contractor_mkt-behavior_invite-response.sql</p> creates: ['analytics.invite_responses']</a></h3>
+    <div><pre>
+    /*
+{
+"AUTHOR":"John J. Horton", 
+"PURPOSE":"Characterize invite responses",
+"STATUS":"REFACTOR", 
+"NOTES":""" """,
+"CREATES":['analytics.invite_responses'],
+"DEPENDS":['analytics.candidacy_timing'],
+"SETUP_SCRIPT": True
+}
+*/
+
+drop table if exists invites; 
+create temp table invites as 
+select 
+*
+, initiation_date::date as initiation_date_agg
+from analytics.candidacy_timing 
+where createdtype = 'Client' and opening_created > '2011-01-01' 
+distributed by(application); 
+
+drop table if exists invites_with_hours_worked; 
+create temp table invites_with_hours_worked as 
+select 
+  application
+, i.contractor 
+, initiation_date_agg
+, initiation_date
+, extract(week from initiation_date) as week
+, extract(year from initiation_date) as year
+, extract(month from initiation_date) as month
+, case when contractor_interview_decision_timestamp is null then 0 else 1 end as accepted_invite
+, sum(case when asg.hours is null then 0 else asg.hours end) as hours_worked_same_day 
+from invites as i
+left join agg.a_assignment as asg
+on (asg.contractor, asg.date) = (i.contractor, i.initiation_date_agg)
+group by 1,2,3,4, 5, 6, 7, 8 
+distributed by(application); 
+
+drop table if exists invite_neighborhood; 
+create temp table invite_neighborhood as 
+select 
+  application
+ ,count(*) over (partition by contractor, month, year, week) - 1 as invites_same_week_exclusive 
+, sum(accepted_invite) over (partition by contractor, contractor, month, year, week) - accepted_invite 
+  		       as accepted_invites_same_week_exclusive
+ ,count(*) over (partition by contractor, initiation_date_agg) - 1 as invites_same_day_exclusive 
+, sum(accepted_invite) over (partition by contractor, initiation_date_agg) - accepted_invite 
+  		       as accepted_invites_same_day_exclusive
+from invites_with_hours_worked;  
+
+drop table if exists analytics.invite_responses; 
+create table analytics.invite_responses as 
+select 
+  ih.*
+, invites_same_day_exclusive
+, invites_same_week_exclusive
+, accepted_invites_same_day_exclusive
+, accepted_invites_same_week_exclusive 
+from invites_with_hours_worked as ih
+join invite_neighborhood as n
+on n.application = ih.application 
+distributed by(application); 
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="REFACTOR">contractor_mkt-behavior_keyboard-intensity.sql</p> creates: ['analytics.keyboard_intensity']</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "REFACTOR", 
+ "PURPOSE": """Creates a usable dataset of time tracker data.""", 
+ "NOTES": """Turns keyboard intensity data into a more usable table. To get only true as-if-random 
+             measures of productivity, select only 'unbiased = 1' reports.
+	     Currently only based upon 2012Q1
+	     """,
+"CREATES":['analytics.keyboard_intensity'], 
+"DEPENDS":[], 
+}
+*/
+
+drop table if exists keyboard_temp; 
+create table keyboard_temp as 
+select 
+ foo.*
+, extract(epoch from time_delta) as seconds_difference
+, utc_ts::date as utc_date
+, local_ts::date as local_date
+from (
+      select 
+         a.contractor_id 
+        ,a.local_ts::date as work_date 
+	,date_part('dow'::text, 	a.local_ts) AS dayoftheweek
+	,date_part('hour'::text, 	a.local_ts) AS "hour"
+	,date_part('minute'::text, 	a.local_ts) AS "minute"
+	,date_part('day'::text, 	a.local_ts) AS "day"
+	,date_part('month'::text, 	a.local_ts) AS "month"
+	,a.utc_ts
+	,a.local_ts
+	,a.timezone
+	,a.city
+	,a.country
+	,a.key_events
+	,a.mouse_events
+        ,a.lat
+        ,a.long 
+	,a.local_ts - lag(a.local_ts) over (partition by a.contractor_id order by a.local_ts asc) as time_delta
+        ,a.contractor
+        ,a.status
+        ,lag(a.status) over (partition by a.contractor_id order by a.local_ts asc) as lag_status
+        ,lag(a.status,2) over (partition by a.contractor_id order by a.local_ts asc) as lag_lag_status
+from
+	(
+       select 
+	p."login" as contractor_id
+       ,p.status
+       ,p.ts AS utc_ts
+       ,timezone(('UTC'::text || "substring"("replace"((d."Timezone")::text, 
+       'UTC '::text, 'UTC-00:00'::text), 4, 6)),	
+			     timezone('UTC'::text, p.ts)) AS local_ts
+       ,d."Timezone" AS timezone
+       ,d."City" AS city
+       ,d."LocLat" as lat
+       ,d."LocLong" as long
+       ,d."Country" AS country
+       ,d."Record ID#" as contractor
+       ,(p.keyb_events_count)::integer AS key_events
+       ,(p.mouse_events_count)::integer AS mouse_events
+       from pfdb_2012q1 as p, "oDesk DB"."Developers" as d
+       where ((p."login")::text = (d."oDeskUserID")::text) 
+       and d."Record ID#" % 1 = 0) as a) as foo
+distributed by(contractor);
+
+
+drop table if exists analytics.keyboard_intensity; 
+create table analytics.keyboard_intensity as 
+select * 
+, case when status = 'NORMAL' and lag_status = 'NORMAL' and lag_lag_status = 'NORMAL' then 1 else 0 end as unbiased 
+from keyboard_temp 
+distributed by(contractor); 
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="REFACTOR">contractor_mkt-behavior_panel.sql</p> creates: ['analytics.contractor_panel']</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "REFACTOR", 
+ "PURPOSE": """Create a daily contractor panel""", 
+ "NOTES": """  """, 
+ "CREATES":['analytics.contractor_panel']
+}
+*/
+
+
+-- Set dates 
+-- \set recruit_start '2012-01-01'
+-- \set recruit_end \'2012-02-01\' 
+
+
+drop table if exists worker_sample;
+create temp table worker_sample as
+select c.contractor
+, sum(case when ja.createdtype = 'professional' then 1 else 0 end) as num_apps
+from agg.b_contractor as c
+left join agg.b_job_application as ja
+on ja.contractor = c.contractor 
+where c.cdate > '2012-01-01'
+and c.cdate < '2012-02-01' 
+and c.first_date_worked is not null
+and c.first_application_date is not null
+and c.contractor % 5 = 0
+group by c.contractor
+having sum(case when ja.createdtype = 'professional' then 1 else 0 end) > 10;
+
+drop table if exists analytics.contractor_panel;
+create table analytics.contractor_panel as
+select contractor, date
+from worker_sample
+left join (select date, woe
+	   from "oDesk DB".date_dim
+	   where date > '2012-02-01'
+	   and date < '2012-07-01') as d
+on 1 = 1
+distributed by(contractor);
+
+/*
+##############################################
+# APPLICATIONS, INTERVIEWS, INVITATIONS, HIRES
+##############################################
+*/
+
+drop table if exists app_invite_count;
+create temp table app_invite_count as
+select
+p.contractor
+, p.date
+, sum(case when ja.createdtype = 'client' then 1 else 0 end) as num_invites
+, sum(case when ja.createdtype = 'professional' then 1 else 0 end) as num_applications
+, sum(case when ja.createdtype = 'professional'
+	   and job_type = 'hr' then 1 else 0 end) as num_hourly_applications
+, sum(case when ja.createdtype = 'client'
+	   and job_type = 'hr' then 1 else 0 end) as num_hourly_invites
+, sum(case when ja.createdtype = 'client'
+	   and invmc_dev_reply = 'accept'
+	   then 1
+	   else 0 end) as num_accepted_invites
+, sum(case when interview_date is not null
+	   then 1
+	   else 0 end) as num_interviews
+, sum(case when hire_date is not null
+	   then 1
+	   else 0 end) as num_hires
+, sum(case when hire_date is not null and job_type = 'hr'
+	   then 1
+	   else 0 end) as num_hourly_hires
+from analytics.contractor_panel as p
+left join agg.b_job_application  as ja
+on ja.contractor = p.contractor and ja.date = p.date
+group by p.contractor, p.date
+distributed by(contractor);
+
+alter table analytics.contractor_panel add column num_applications int;
+alter table analytics.contractor_panel add column num_invites int;
+alter table analytics.contractor_panel add column num_hourly_applications int;
+alter table analytics.contractor_panel add column num_hourly_invites int;
+alter table analytics.contractor_panel add column num_accepted_invites int;
+alter table analytics.contractor_panel add column num_interviews int;
+alter table analytics.contractor_panel add column num_hires int;
+alter table analytics.contractor_panel add column num_hourly_hires int;
+
+update analytics.contractor_panel as p
+set
+  num_applications        = aic.num_applications
+, num_invites		  = aic.num_invites
+, num_hourly_applications = aic.num_hourly_applications
+, num_hourly_invites      = aic.num_hourly_invites
+, num_accepted_invites    = aic.num_accepted_invites
+, num_interviews          = aic.num_interviews
+, num_hires               = aic.num_hires
+, num_hourly_hires        = aic.num_hourly_hires
+from app_invite_count as aic
+where (aic.date, aic.contractor) = (p.date, p.contractor);
+
+/*
+######################
+# APPLICATION QUALITY
+######################
+*/
+
+drop table if exists app_quality;
+create temp table app_quality as
+select
+  p.contractor
+, p.date
+, avg(case when frac_original is not null then frac_original else null end)
+      as mean_customization
+, avg(case when frac_original is not null and ja.createdtype = 'professional'
+	   then frac_original else null end)
+      as mean_application_customization
+, avg(case when frac_original is not null and ja.createdtype = 'client' and
+	   invmc_dev_reply = 'accept'
+	   then frac_original else null end)
+      as mean_invite_response_customization
+from analytics.contractor_panel as p
+left join agg.b_job_application  as ja
+on ja.contractor = p.contractor and ja.date = p.date
+left join analytics.cover_letter_novelty as cln
+on cln.application = ja.application
+group by p.contractor, p.date
+distributed by(contractor);
+
+alter table analytics.contractor_panel add column mean_customization float;
+alter table analytics.contractor_panel add column mean_application_customization float;
+alter table analytics.contractor_panel add column mean_invite_response_customization float;
+
+update analytics.contractor_panel as p
+set
+  mean_customization = aq.mean_customization
+, mean_application_customization = aq.mean_application_customization
+, mean_invite_response_customization = aq.mean_invite_response_customization
+from app_quality as aq
+where (aq.date, aq.contractor) = (p.date, p.contractor);
+
+/*
+###########
+# RELEVANCE
+###########
+*/ 
+
+drop table if exists app_relevance; 
+create temp table app_relevance as 
+select 
+  p.contractor 
+, p.date
+, avg(case when cosine_similarity is not null and ja.createdtype = 'client' then cosine_similarity else null end)
+      as mean_cosine_similarity_invite 
+, avg(case when cosine_similarity is not null and ja.createdtype = 'professional' then cosine_similarity else null end)
+      as mean_cosine_similarity_app
+from analytics.contractor_panel as p
+left join agg.b_job_application  as ja
+on ja.contractor = p.contractor and ja.date = p.date
+left join analytics.skill_based_application_relevance as sr
+on sr.application = ja.application
+group by p.contractor, p.date
+distributed by(contractor);
+
+alter table analytics.contractor_panel add column mean_cosine_similarity_app float;
+alter table analytics.contractor_panel add column mean_cosine_similarity_invite float;
+
+update analytics.contractor_panel as p
+set
+    mean_cosine_similarity_app = ar.mean_cosine_similarity_app
+  , mean_cosine_similarity_invite = ar.mean_cosine_similarity_invite
+from app_relevance as ar
+where (ar.date, ar.contractor) = (p.date, p.contractor);
+
+/*
+################
+# RUNNING TOTALS
+################
+*/
+
+drop table if exists running_totals; 
+create temp table running_totals as 
+select
+ p.contractor
+,p.date 
+,sum(num_applications) over (partition by contractor order by p.date asc) as prior_apps
+,sum(num_invites) over (partition by contractor order by p.date asc) as prior_invites
+,sum(num_hires) over (partition by contractor order by p.date asc) as prior_hires
+,avg(mean_application_customization) over (partition by contractor order by p.date asc) as 
+mean_prior_app_customization 
+,avg(mean_cosine_similarity_app) over (partition by contractor order by p.date asc) as 
+mean_prior_cosine_similarity_app
+,avg(mean_cosine_similarity_invite) over (partition by contractor order by p.date asc) as 
+mean_prior_cosine_similarity_invite
+from analytics.contractor_panel as p
+distributed by(contractor); 
+
+alter table analytics.contractor_panel add column prior_apps int;
+alter table analytics.contractor_panel add column prior_hires int;
+alter table analytics.contractor_panel add column prior_invites int;
+alter table analytics.contractor_panel add column mean_prior_app_customization float;
+alter table analytics.contractor_panel add column mean_prior_cosine_similarity_app float;
+alter table analytics.contractor_panel add column mean_prior_cosine_similarity_invite float;
+
+
+update analytics.contractor_panel as p
+set
+  prior_apps = rt.prior_apps
+ ,prior_invites = rt.prior_invites
+ ,mean_prior_app_customization = rt.mean_prior_app_customization 
+ ,prior_hires = rt.prior_hires
+, mean_prior_cosine_similarity_app = rt.mean_prior_cosine_similarity_app
+, mean_prior_cosine_similarity_invite = rt.mean_prior_cosine_similarity_invite
+from running_totals as rt
+where (rt.date, rt.contractor) = (p.date, p.contractor);
+
+/*
+#######
+# LEADS
+#######
+*/
+
+drop table if exists leads; 
+create temp table leads as 
+select 
+  contractor, date 
+, lead(num_applications) over (partition by contractor order by date asc) as lead_num_applications
+from analytics.contractor_panel; 
+
+alter table analytics.contractor_panel add column lead_num_applications int;
+
+
+update analytics.contractor_panel as p
+set 
+  lead_num_applications = l.lead_num_applications
+from leads as l
+where l.contractor = p.contractor and l.date = p.date;  
+
+/*
+############
+# DATE UNITS 
+############
+*/ 
+
+
+
+-- create temp table skeleton_with_c as
+-- select
+-- w.*, skeleton.date
+-- from worker_sample as w
+-- left join skeleton
+-- on 1 = 1;
+
+-- drop table if exists worker_hours_panel;
+-- create table worker_hours_panel as
+-- select
+-- w.*
+-- , job_type
+-- , application
+-- , createdtype
+-- , odb_ja."Hourly Charge Rate" as wage_bid
+-- from skeleton_with_c as w
+-- left join agg.b_job_application as ja
+-- on ja.contractor = w.contractor
+-- and ja.date =  w.date
+-- left join "oDesk DB"."JobApplications" as odb_ja
+-- on ja.application = odb_ja."Record ID#"
+-- and ja.date = w.date;
+
+
+-- , count(distinct(case when ja.createdtype = 'client' and job_type = 'fp'
+--		      then ja.opening
+--		      else null end)) as num_apps_fp
+-- , count(distinct(case when ja.createdtype = 'client' and job_type = 'hr'
+--		      then ja.opening
+--		      else null end)) as num_apps_hr
+-- , count(distinct(case when ja.createdtype = 'client'
+--		      then ja.opening
+--		      else null end)) as num_apps_total
+-- , count(distinct(case when ja.createdtype = 'professional'
+--		      then ja.opening
+--		      else null end)) as num_invites
+-- , sum(case when status = 'filled' then 1 else 0 end) as num_hires
+
+
+
+-- drop table if exists client_sample;
+-- create table client_sample as
+-- select employer
+-- from agg.b_employer
+-- where signup_date > '2011-01-01' and
+-- signup_date < '2011-02-01' and employer % 1000 = 0;
+
+
+-- drop table if exists client_skeleton;
+-- create temp table client_skeleton as
+-- select
+-- c.*,
+-- skel.date
+-- from client_sample as c
+-- left join (
+--  select *
+--  from "oDesk DB".date_dim
+--  where date > '2011-01-01' and date < '2012-01-01'
+--  ) as skel
+-- on 1 = 1;
+
+-- drop table if exists client_panel;
+-- create table client_panel as
+-- select
+-- e.employer
+-- ,e.date
+-- ,opening
+-- ,opening_count
+-- ,application_count
+-- ,assignment_count
+-- ,total_charge
+-- ,cancel_initiator
+-- ,reason
+-- from client_skeleton as e
+-- left join agg.c_opening as o
+-- on (o.employer, o.date)  =(e.employer, e.date);
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="BAD">contractor_mkt-behavior_skill-ordering.sql</p> creates: []</a></h3>
+    <div><pre>
+    SELECT 
+AVG(alpha_ordered) 
+FROM (
+SELECT 
+worker
+, CASE WHEN COUNT(*) = SUM(CASE WHEN rank = alpha_rank THEN 1 ELSE 0 END) THEN 1 ELSE 0 END AS alpha_ordered
+, COUNT(DISTINCT(skill)) AS num_skills
+FROM (
+SELECT 
+ dev."Record ID#" AS worker 
+,skills."Skill" AS skill
+,"Rank" AS rank  
+, RANK() OVER (PARTITION BY dev."Record ID#" ORDER BY skills."Skill") AS alpha_rank  
+FROM "oDesk DB"."Developers" AS dev
+LEFT JOIN "oDesk DB"."DeveloperSkills" AS devskills 
+ON devskills."Developer" = dev."Record ID#" 
+JOIN "oDesk DB"."Skills" AS skills 
+ON devskills."SkillRef" = skills."Record ID#" 
+WHERE dev."Record ID#" % 100 = 0) AS t 
+GROUP BY worker) AS g
+WHERE num_skills > 4;  
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="OK">contractor_mkt-behavior_test-taking.sql</p> creates: ['analytics.contractor_test_history']</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "OK", 
+ "PURPOSE": """Create a table of containing each test taking by a contractor.""",
+ "CREATES":['analytics.contractor_test_history'], 
+ "DEPENDS":[],  
+ "NOTES": """ """, 
+ "SETUP_SCRIPT":True 
+}
+*/
+
+drop table if exists analytics.contractor_test_history; 
+create table analytics.contractor_test_history as 
+select 
+ "Name" as test
+, "Related Developer" as contractor 
+,  to_timestamp(e."Date Created"/1000) as time_stamp 
+,  to_timestamp(e."Date Created"/1000)::date as date 
+, "ER Score" as score
+, case when e."Status" = 'Public' then 1 else 0 end as test_public 
+from "oDesk DB"."TSExams" as e
+left join "oDesk DB"."TSTests" as t
+on e."Related TSTest" = t."Record ID#"
+distributed by(contractor); 
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="RE-FACTOR">contractor_mkt-outcomes_earnings_panel.sql</p> creates: ['analytics.contractor_hours_earnings_panel']</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "RE-FACTOR", 
+ "PURPOSE": """Create a monthly panel of contractor earnings and hours worked""", 
+ "NOTES": """Panels start the day contractors join""",
+ "CREATES": ['analytics.contractor_hours_earnings_panel'],
+ "DEPENDS": [],  
+ "SETUP_SCRIPT": True
+}
+*/
+
+drop table if exists hours; 
+create temp table hours as
+select 
+  to_timestamp("WorkPerformedOn"/1000) as date
+, "Hours" as hours 
+, "Hours Offline" as offline_hours 
+, employer
+, contractor
+, hr_rate
+, assignment 
+, to_timestamp(dev."Date Created"/1000) as contractor_signup_date 
+from "oDesk DB"."AssignmentHours" as asgh
+left join agg.b_assignment as asg
+on asgh."Assignment" = asg.assignment 
+left join "oDesk DB"."Developers" as dev 
+on dev."Record ID#" = asg.contractor 
+distributed by(contractor); 
+
+--- Make a 1 year panel 
+drop table if exists periods; 
+create table periods (period int);
+insert into periods values (0);  
+insert into periods values (1); 
+insert into periods values (2); 
+insert into periods values (3); 
+insert into periods values (4); 
+insert into periods values (5); 
+insert into periods values (6);
+insert into periods values (7);
+insert into periods values (8);
+insert into periods values (9);
+insert into periods values (10);
+insert into periods values (11);
+insert into periods values (12);
+
+-- This ensures that every contractor has 12 periods
+drop table if exists skeleton; 
+create temp table skeleton as
+select contractor, period 
+from (select 
+            distinct(contractor) 
+            from hours) as contractor_list 
+left join periods 
+on 1 = 1
+distributed by(contractor);  
+
+drop table if exists contractor_consolidated; 
+create temp table contractor_consolidated as 
+select 
+  contractor
+  , sum(hours) as hours
+  , sum(offline_hours) as offline_hours
+  , sum(hr_rate * (hours + offline_hours)) as earnings
+  , count(distinct(assignment)) as num_assignments 
+  , period 
+from (
+      select 
+      contractor
+      ,hours 
+      ,offline_hours
+      ,hr_rate
+      ,assignment
+      ,floor(extract(days from date - contractor_signup_date) / 30) as period 
+      from hours) as period_obs
+group by contractor, period; 
+
+drop table if exists analytics.contractor_hours_earnings_panel; 
+create table analytics.contractor_hours_earnings_panel as
+select 
+  s.contractor
+, s.period
+, case when cc.hours is null then 0 else cc.hours end as hours
+, case when cc.offline_hours is null then 0 else cc.offline_hours end as offline_hours 
+, case when cc.earnings is null then 0 else cc.earnings end as earnings  
+, case when cc.num_assignments is null then 0 else cc.num_assignments end as num_assignments  
+, to_timestamp(dev."Date Created"/1000) as contractor_signup_date  
+from skeleton as s
+left join contractor_consolidated as cc
+on s.contractor = cc.contractor and s.period = cc.period 
+left join "oDesk DB"."Developers" as dev
+on dev."Record ID#" = cc.contractor
+order by contractor asc, period asc 
+distributed by(contractor); 
+    </pre></div>
+    
+    <h3><a href="#"><p class="OK">contractor_mkt-outcomes_feedback_ts.sql</p> creates: []</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "OK", 
+ "PURPOSE": """Create a table of a contractor's feedback history.""", 
+ "NOTES": """ """
+}
+*/
+
+drop table if exists analytics.contractor_feedback_history; 
+create table analytics.contractor_feedback_history as 
+select 
+ contractor
+, last_date_worked as date
+, sum(total_charge * "Provider Total Score")/sum(total_charge) as avg_score 
+from agg.b_assignment as asg
+left join "oDesk DB"."Feedbacks" as fb
+on fb."Related Assignment" = asg.assignment
+where total_charge > 0 and fb."Provider Total Score" >= 1
+group by contractor, last_date_worked;  
+
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="REFACTOR">contractor_mkt-outcomes_history.sql</p> creates: analytics.contractor_history</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "REFACTOR", 
+ "PURPOSE": """Create a table of contractor's aggregate work history""", 
+ "NOTES": """ Clean up garbage """,
+ "CREATES":"""analytics.contractor_history"""
+}
+*/
+
+
+drop table if exists analytics.contractor_market_history; 
+create table analytics.contractor_market_history as 
+select 
+contractor
+, date
+, avg(rt_hours) as total_hours_worked_by_contractor_to_date
+, avg(earnings) as total_earnings_by_contractor_to_date
+from (
+select 
+  contractor
+, date
+, sum(hours) over (partition by contractor order by date asc) as rt_hours
+, sum(total_charge) over (partition by contractor order by date asc) as earnings
+from agg.a_assignment) as foo
+group by contractor, date 
+distributed by (contractor); 
+
+drop table if exists prior_assignments; 
+create temp table prior_assignments as
+select 
+  mh1.contractor
+, mh1.date 
+, count(distinct(assignment)) as num_assignments
+from analytics.contractor_market_history as mh1 
+left join agg.a_assignment as asg
+on asg.contractor = mh1.contractor and mh1.date > asg.date
+group by mh1.contractor, mh1.date
+distributed by(contractor); 
+
+
+alter table analytics.contractor_market_history add column total_num_assignments_by_contractor_to_date int; 
+
+update analytics.contractor_market_history as mh 
+set total_num_assignments_by_contractor_to_date = pa.num_assignments 
+from prior_assignments as pa
+where pa.contractor = mh.contractor and pa.date = mh.date; 
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="REFACTOR">contractor_mkt-outcomes_hours_ts.sql</p> creates: []</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "REFACTOR", 
+ "PURPOSE": """Create a table of a contractor's aggregate work history when they apply to a job.""", 
+ "NOTES": """There is probably a much faster way to to do this---namely create a table that just 
+             has running totals and changes. 
+
+
+   """
+}
+*/
+
+drop table if exists analytics.contractor_hours_worked_by_application_date; 
+create table analytics.contractor_hours_worked_by_application_date as 
+select 
+application
+, sum(hours) as total_hours_worked_at_application 
+, sum(bonus) as total_bonuses_at_application
+, sum(total_charge) as total_earnings_at_application
+, sum(refund) as total_refunds_made_at_application
+, count(distinct(assignment)) as count_distinct_assignments_at_appliation
+, count(distinct(asg.employer)) as count_distinct_employers_at_application
+from agg.b_job_application as ja
+left join agg.a_assignment as asg
+on ja.contractor = asg.contractor 
+and asg.date < ja.date
+group by application
+distributed by(application); 
+
+
+    </pre></div>
+    
+    </div>
+     
+    <h1>client</h1>
+    <div id="client_accordion">
+    
+    <h3><a href="#"><p class="OK">client_mkt-behavior_hiring_dc.sql</p> creates: ['john_horton_hiring_scenarios.job_applications']</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "OK", 
+ "PURPOSE": """Create a comprehensive dataset examining the hiring decision.""", 
+ "NOTES": """ """,
+ "CREATES": ['john_horton_hiring_scenarios.job_applications'],
+ "DEPENDS": ['analytics.parent_openings','analytics.candidacy_timing',
+	    'analytics.contractor_education',
+	    'analytics.contractor_experiences',
+	    'analytics.contractor_feedback_history',
+	    'analytics.contractor_market_history',
+	    'analytics.contractor_test_history',
+	    'analytics.cover_letter_novelty',
+	    'analytics.employer_market_history',
+	    'analytics.has_picture'], 
+ "SETUP_SCRIPT": False 
+}
+*/
+
+create schema john_horton_hiring_scenarios;
+
+--  1. Need to get viewew_by_employer / viewed_by_contractor measures back in agg.b_opening
+--   First run this locally by switching to the directory where it is stored. 
+--   Create local connection to ODW: psql -p 63333 -h localhost -U odw
+--  Get the data: \copy john_horton_hiring_scenarios.job_applications TO '/tmp/filename.csv' csv header
+-- - Create local connection to ODW: psql -U john_horton -p 63333 -h localhost odw
+
+-------------
+-- DATE RANGE
+-------------
+
+\set start_date '\'2012-01-01\''
+\set end_date '\'2012-01-03\''
+
+-----------
+-- OPENINGS
+-----------
+
+-- Notes: How do we know we are not getting re-posted openings? Spawned openings should not be a problem.
+
+-- drop table if exists john_horton_hiring_scenarios.all_openings;
+-- create table john_horton_hiring_scenarios.all_openings as
+-- select   o.opening
+--        , to_timestamp(oo."Date Created"/1000) as opening_date
+--        , md5(oo."Job Description" || oo."Opening Title" ||  o.employer) as fingerprint
+-- from agg.b_opening as o, "oDesk DB"."Openings" as oo
+-- where o.opening = oo."Record ID#"
+-- and o.date > :start_date and o.date < :end_date
+-- distributed by(opening);
+
+
+drop table if exists john_horton_hiring_scenarios.all_openings;
+create table john_horton_hiring_scenarios.all_openings as
+select  
+*
+from analytics.parent_openings as o
+where o.opening_date::date > :start_date and o.opening_date::date < :end_date
+distributed by(opening);
+
+alter table john_horton_hiring_scenarios.all_openings add column fixed_price_budget float; 
+
+create temp table budget as 
+select 
+ opening
+,"Amount" as fixed_price_budget 
+from john_horton_hiring_scenarios.all_openings as hs
+left join "oDesk DB"."Openings" as o
+on hs.opening = o."Record ID#" 
+distributed by(opening); 
+
+update john_horton_hiring_scenarios.all_openings as o
+set fixed_price_budget = b.fixed_price_budget
+from budget as b 
+where b.opening = o.opening; 
+
+-- from agg.b_opening as o, "oDesk DB"."Openings" as oo
+-- where o.opening = oo."Record ID#"
+-- and o.date > :start_date and o.date < :end_date
+-- distributed by(opening);
+
+
+-- changes 
+-- , case when createdtype = 'client' 
+--        then invmc_dev_reply else null end as contractor_reply_to_employer_interview_request
+-- , case when createdtype = 'professional' 
+--        then invmc_comp_reply else null end as employer_reply_to_contractor_interview_request
+--, to_timestamp(odb_ja."Date Created" / 1000) as application_timestamp
+
+drop table if exists john_horton_hiring_scenarios.job_applications;
+create table john_horton_hiring_scenarios.job_applications as
+select
+  ja.application
+, ja.contractor
+, ja.date
+, is_ic
+, ja.createdtype
+, ja.agency
+, ja.status as ja_status
+, o.*
+, initiation_date                         
+, contractor_interview_decision_timestamp 
+, employer_interview_decision_timestamp   
+, interview_commit_date                   
+, contractor_offer_decision_timestamp     
+, employer_offer_decision_timestamp       
+, offer_commit_date                       
+, arrival_rank                            
+, initiation_rank                         
+--, viewed_by_employer                      
+--, viewed_by_contractor                    
+from john_horton_hiring_scenarios.all_openings as o
+left join agg.b_job_application as ja
+on ja.opening = o.opening
+left join analytics.candidacy_timing as ct
+on ct.application = ja.application 
+distributed by(application); 
+
+-- join "oDesk DB"."JobApplications" as odb_ja
+-- on odb_ja."Record ID#" = ja.application
+-- distributed by(application);
+
+-- ### TEST: Are applications unique?
+-- select (select count(*) from john_horton_hiring_scenarios.job_applications) -
+--    (select count(distinct(application)) from john_horton_hiring_scenarios.job_applications);
+
+-----------------------
+-- COVER LETTER NOVELTY
+-----------------------
+
+-- Notes: some null values for frac_original - are these brand new applications?
+
+alter table john_horton_hiring_scenarios.job_applications add column frac_original float;
+
+update john_horton_hiring_scenarios.job_applications as ja
+set frac_original = cln.frac_original
+from analytics.cover_letter_novelty as cln
+where cln.application = ja.application;
+
+-----------------------------
+-- EMPLOYER MARKET EXPERIENCE
+-----------------------------
+
+drop table if exists employer_history;
+create temp table employer_history as
+select
+application
+, case when total_hours_worked_by_employer_to_date is null 
+       then 0 else total_hours_worked_by_employer_to_date end as total_hours_worked_by_employer_to_date
+, case when total_earnings_by_employer_to_date is null 
+       then 0 else total_earnings_by_employer_to_date end as total_earnings_by_employer_to_date
+, case when total_num_assignments_by_employer_to_date is null 
+       then 0 else total_num_assignments_by_employer_to_date end as total_num_assignments_by_employer_to_date
+, date
+from (select
+      ja.application
+      , h.date
+      , h.total_hours_worked_by_employer_to_date
+      , h.total_num_assignments_by_employer_to_date
+      , h.total_earnings_by_employer_to_date
+      , max(h.date) over (partition by ja.application) as max_h_date
+      from john_horton_hiring_scenarios.job_applications as ja
+      left join analytics.employer_market_history as h
+      on h.employer = ja.employer and ja.date > h.date) as foo
+where foo.date = foo.max_h_date or foo.date is null -- creates nulls if the employer has no historywww
+distributed by(application);
+
+alter table john_horton_hiring_scenarios.job_applications add column total_hours_worked_by_employer_to_date float;
+alter table john_horton_hiring_scenarios.job_applications add column total_num_assignments_by_employer_to_date int;
+alter table john_horton_hiring_scenarios.job_applications add column total_earnings_by_employer_to_date float;
+
+update john_horton_hiring_scenarios.job_applications as ja
+set 
+ total_hours_worked_by_employer_to_date = ch.total_hours_worked_by_employer_to_date
+,total_earnings_by_employer_to_date = ch.total_earnings_by_employer_to_date
+,total_num_assignments_by_employer_to_date = ch.total_num_assignments_by_employer_to_date
+from employer_history as ch
+where ch.application = ja.application;
+
+
+------------------------------
+-- EMPLOYER FIXED ATTRIBUTES
+------------------------------
+drop table if exists employer_fixed; 
+create temp table employer_fixed as 
+select 
+application
+, "Country" as employer_country
+from john_horton_hiring_scenarios.job_applications as ja 
+left join "oDesk DB"."Companies" as odb_co 
+on odb_co."Record ID#" = ja.employer
+distributed by(application); 
+
+alter table john_horton_hiring_scenarios.job_applications add column employer_country varchar;
+
+update john_horton_hiring_scenarios.job_applications as ja
+set 
+  employer_country = ef.employer_country
+from employer_fixed as ef
+where ef.application = ja.application;
+
+------------------------------
+-- CONTRACTOR FIXED ATTRIBUTES
+------------------------------
+drop table if exists contractor_fixed; 
+create temp table contractor_fixed as 
+select 
+application
+, "Country" as country
+, "Primary Category" as contractor_self_selected_primary_category
+, "ProfileTitle" as contractor_profile_title
+, "LocLat" as contractor_latitude
+, "LocLong" as contractor_longitude 
+from john_horton_hiring_scenarios.job_applications as ja 
+left join "oDesk DB"."Developers" as odb_dev 
+on odb_dev."Record ID#" = ja.contractor
+distributed by(application); 
+
+alter table john_horton_hiring_scenarios.job_applications add column country varchar;
+alter table john_horton_hiring_scenarios.job_applications add column contractor_self_selected_primary_category varchar;
+alter table john_horton_hiring_scenarios.job_applications add column contractor_latitude float;
+alter table john_horton_hiring_scenarios.job_applications add column contractor_longitude float;
+alter table john_horton_hiring_scenarios.job_applications add column contractor_profile_title varchar;
+
+
+update john_horton_hiring_scenarios.job_applications as ja
+set 
+ country = cf.country
+,contractor_self_selected_primary_category = cf.contractor_self_selected_primary_category
+,contractor_latitude = cf.contractor_latitude
+,contractor_longitude = cf.contractor_longitude
+,contractor_profile_title = cf.contractor_profile_title
+from contractor_fixed as cf
+where cf.application = ja.application; 
+
+-------------------------------
+-- CONTRACTOR MARKET EXPERIENCE
+-------------------------------
+
+drop table if exists contractor_history;
+create temp table contractor_history as
+select
+application
+, case when total_hours_worked_by_contractor_to_date is null then 0 else total_hours_worked_by_contractor_to_date end as total_hours_worked_by_contractor_to_date
+, case when total_earnings_by_contractor_to_date is null then 0 else total_earnings_by_contractor_to_date end as total_earnings_by_contractor_to_date
+, case when total_num_assignments_by_contractor_to_date is null then 0 else total_num_assignments_by_contractor_to_date end as total_num_assignments_by_contractor_to_date
+, date
+from (select
+      ja.application
+      , h.date
+      , h.total_hours_worked_by_contractor_to_date
+      , h.total_num_assignments_by_contractor_to_date
+      , h.total_earnings_by_contractor_to_date
+      , max(h.date) over (partition by ja.application) as max_h_date
+      from john_horton_hiring_scenarios.job_applications as ja
+      left join analytics.contractor_market_history as h
+      on h.contractor = ja.contractor and ja.date > h.date) as foo
+where foo.date = foo.max_h_date or foo.date is null -- creates nulls if the contractor has no history
+distributed by(application);
+
+alter table john_horton_hiring_scenarios.job_applications add column total_hours_worked_by_contractor_to_date float;
+alter table john_horton_hiring_scenarios.job_applications add column total_num_assignments_by_contractor_to_date int;
+alter table john_horton_hiring_scenarios.job_applications add column total_earnings_by_contractor_to_date float;
+
+update john_horton_hiring_scenarios.job_applications as ja
+set 
+ total_hours_worked_by_contractor_to_date = ch.total_hours_worked_by_contractor_to_date
+,total_earnings_by_contractor_to_date = ch.total_earnings_by_contractor_to_date
+,total_num_assignments_by_contractor_to_date = ch.total_num_assignments_by_contractor_to_date
+from contractor_history as ch
+where ch.application = ja.application;
+
+-----------------------------
+-- CONTRACTOR PROFILE PICTURE
+-----------------------------
+
+drop table if exists contractor_picture; 
+create temp table contractor_picture as 
+select 
+application
+, avg(case when has_picture is not null then has_picture else 0 end) as has_picture  
+from john_horton_hiring_scenarios.job_applications as ja
+left join analytics.has_picture as hp
+on hp.contractor = ja.contractor 
+group by application
+distributed by(application); 
+
+alter table john_horton_hiring_scenarios.job_applications add column has_picture int;
+
+update john_horton_hiring_scenarios.job_applications as ja
+set 
+   has_picture = hp.has_picture 
+from contractor_picture as hp
+where hp.application = ja.application; 
+
+--------------------------------
+-- CONTRACTOR OFFLINE EXPERIENCE
+--------------------------------
+
+-- Uses: analytics.contractor_experiences
+
+drop table if exists contractor_offline_experience;
+create table contractor_offline_experience as
+select
+ application
+,sum(case when exper_id is not null then 1 else 0 end) as num_experiences
+,sum(duration)/365.0 as years_exper
+,sum(current_experience) as on_going_experiences
+from
+(
+     select
+      application
+     ,opening
+     ,case when duration is null and exper_id is not null then
+       extract(days from ja.date - exper.start_date)
+					     else duration end as duration
+     ,exper_id
+     , case when
+	    exper_id is not null and
+	    exper.start_date < ja.date and
+	    (ja.date < exper.end_date or exper.end_date is null)
+     then 1 else 0 end as current_experience
+     from john_horton_hiring_scenarios.job_applications as ja
+     left join analytics.contractor_experiences as exper
+     on exper.contractor = ja.contractor
+     and ja.date > start_date) as foo
+group by application, opening
+distributed by(application);
+
+alter table john_horton_hiring_scenarios.job_applications add column num_experiences int;
+alter table john_horton_hiring_scenarios.job_applications add column years_exper float;
+alter table john_horton_hiring_scenarios.job_applications add column on_going_experiences int;
+
+update john_horton_hiring_scenarios.job_applications as ja
+set
+  num_experiences = coe.num_experiences
+, years_exper = coe.years_exper
+, on_going_experiences = coe.on_going_experiences
+from contractor_offline_experience as coe
+where coe.application = ja.application;
+
+
+---------------------------
+-- WAGE BIDS BY CONTRACTORS
+---------------------------
+
+drop table if exists bid_data;
+create temp table bid_data as
+select
+application
+, "Hourly Charge Rate" as wage_bid
+, "Hourly Rate (snap)" as profile_wage
+, "Amount" as fixed_price_bid
+from john_horton_hiring_scenarios.job_applications as ja
+left join "oDesk DB"."JobApplications" as odb_ja
+on ja.application = odb_ja."Record ID#";
+
+alter table john_horton_hiring_scenarios.job_applications add column wage_bid float;
+alter table john_horton_hiring_scenarios.job_applications add column profile_wage float;
+alter table john_horton_hiring_scenarios.job_applications add column fixed_price_bid float;
+
+update john_horton_hiring_scenarios.job_applications as ja
+set
+  wage_bid = bd.wage_bid
+, profile_wage = bd.profile_wage
+, fixed_price_bid  = bd.fixed_price_bid
+from bid_data as bd
+where bd.application = ja.application;
+
+-----------------------
+-- CONTRACTOR EDUCATION
+-----------------------
+
+-- Uses: analytics.contractor_education
+
+drop table if exists contractor_education;
+create temp table contractor_education as
+select
+application,
+educ.*
+from john_horton_hiring_scenarios.job_applications as ja
+left join analytics.contractor_education as educ
+on educ.contractor = ja.contractor
+distributed by(application);
+
+
+alter table john_horton_hiring_scenarios.job_applications add column masters int;
+alter table john_horton_hiring_scenarios.job_applications add column bachelors int;
+alter table john_horton_hiring_scenarios.job_applications add column high_school int;
+alter table john_horton_hiring_scenarios.job_applications add column doctorate int;
+alter table john_horton_hiring_scenarios.job_applications add column diploma int;
+alter table john_horton_hiring_scenarios.job_applications add column missing_education_records int;
+
+update john_horton_hiring_scenarios.job_applications as ja
+set
+  masters = ce.masters
+, bachelors = ce.bachelors
+, high_school = ce.high_school
+, doctorate = ce.doctorate
+, diploma = ce.diploma
+, missing_education_records = ce.missing_education_records
+from contractor_education as ce
+where ce.application = ja.application;
+
+--------------------------
+-- CONTRACTOR TEST HISTORY
+--------------------------
+
+-- Uses: analytics.contractor_test_history
+
+drop table if exists contractor_testing;
+create table contractor_testing as
+select
+  ja.application
+, avg(score) as avg_score_prior_tests
+, sum(case when test is not null then 1 else 0 end) as count_prior_tests
+, sum(case when test_public is not null then test_public else 0 end) as count_prior_public_tests
+from john_horton_hiring_scenarios.job_applications as ja
+left join analytics.contractor_test_history as th
+on ja.contractor = th.contractor and ja.date > th.date
+group by application, ja.date
+distributed by(application);
+
+alter table john_horton_hiring_scenarios.job_applications add column avg_score_prior_tests float;
+alter table john_horton_hiring_scenarios.job_applications add column count_prior_tests int;
+alter table john_horton_hiring_scenarios.job_applications add column count_prior_public_tests int;
+
+update john_horton_hiring_scenarios.job_applications as ja
+set
+avg_score_prior_tests = ct.avg_score_prior_tests
+, count_prior_tests = ct.count_prior_tests
+, count_prior_public_tests = ct.count_prior_public_tests
+from contractor_testing as ct
+where ct.application = ja.application;
+
+----------------------
+-- CONTRACTOR FEEDBACK
+----------------------
+
+drop table if exists contractor_feedback;
+create table contractor_feedback as
+select
+   application
+ , avg_score as contractor_feedback
+from (
+     select
+       application
+     , avg_score
+     , fb.date
+     , max(fb.date) over (partition by ja.application) as max_h_date
+     from john_horton_hiring_scenarios.job_applications as ja
+     left join analytics.contractor_feedback_history as fb
+     on ja.date > fb.date and fb.contractor = ja.contractor) as foo
+where foo.date = max_h_date or foo.date is null
+distributed by(application);
+
+alter table john_horton_hiring_scenarios.job_applications add column contractor_feedback float;
+
+update john_horton_hiring_scenarios.job_applications as ja
+set
+  contractor_feedback = fb.contractor_feedback
+from contractor_feedback as fb
+where fb.application = ja.application;
+
+---------------------
+-- VACANCY ATTRIBUTES
+---------------------
+
+drop table if exists employer_preferences;
+create temp table employer_preferences as
+select
+  application
+, "JobProfileAccessOverride" as visibility
+--, "CreatedType" as createdtype
+, "Level1" as level1
+, "Level2" as level2
+,"PrefEnglishSkill" as pref_english
+,"PrefFeedbackScore" as pref_fb
+,"GroupName" as pref_group
+,"PrefHasPortfolio" as pref_port
+,"PrefHourlyRateMax" as pref_rate_max
+,"PrefHourlyRateMin" as pref_rate_min
+,r."Region" as pref_region
+,t."Name" as pref_test
+,"PrefoDeskHours" as pref_odesk_hours
+, "JobType" as job_type
+from john_horton_hiring_scenarios.job_applications as ja
+left join "oDesk DB"."Openings" as o
+on o."Record ID#" = ja.opening
+left join "oDesk DB"."JobCategories" as jc
+on jc."Record ID#" = o."Related JobCategory"
+left join "oDesk DB"."Regions" as r
+on r."Record ID#" = "PrefLocationRegion"
+left join "oDesk DB"."Groups" as g
+on g."Record ID#" = "PrefGroup"
+left join "oDesk DB"."TSTests" as t
+on t."Record ID#" = "PrefTest"
+distributed by(application);
+
+alter table john_horton_hiring_scenarios.job_applications add column level1 varchar;
+alter table john_horton_hiring_scenarios.job_applications add column level2 varchar;
+alter table john_horton_hiring_scenarios.job_applications add column visibility varchar;
+--alter table john_horton_hiring_scenarios.job_applications add column createdtype varchar;
+alter table john_horton_hiring_scenarios.job_applications add column pref_english int;
+alter table john_horton_hiring_scenarios.job_applications add column pref_fb float;
+alter table john_horton_hiring_scenarios.job_applications add column pref_group varchar;
+alter table john_horton_hiring_scenarios.job_applications add column pref_port boolean;
+alter table john_horton_hiring_scenarios.job_applications add column pref_rate_max float;
+alter table john_horton_hiring_scenarios.job_applications add column pref_rate_min float;
+alter table john_horton_hiring_scenarios.job_applications add column pref_region varchar;
+alter table john_horton_hiring_scenarios.job_applications add column pref_test varchar;
+alter table john_horton_hiring_scenarios.job_applications add column pref_odesk_hours int;
+alter table john_horton_hiring_scenarios.job_applications add column job_type varchar;
+
+
+update john_horton_hiring_scenarios.job_applications as ja
+set
+  level1 = ep.level1
+, level2 = ep.level2
+, visibility = ep.visibility
+--, createdtype = ep.createdtype
+, pref_english = ep.pref_english
+, pref_fb = ep.pref_fb
+, pref_group = ep.pref_group
+, pref_port = ep.pref_port
+, pref_rate_max = ep.pref_rate_max
+, pref_rate_min = ep.pref_rate_min
+, pref_region = ep.pref_region
+, pref_test = ep.pref_test
+, pref_odesk_hours = ep.pref_odesk_hours
+, job_type = ep.job_type
+from employer_preferences as ep
+where ep.application = ja.application;
+
+-------------------------------------------------
+-- ATS OUTCOMES (viewed, hidden and short-listed)
+-------------------------------------------------
+
+drop table if exists ats_outcomes;
+create temp table ats_outcomes as
+select
+application
+, "HasViewedByBuyer" as viewed_by_employer
+, "IsHiddenByBuyer" as hidden_by_employer
+, "IsShortlisted"  as shortlisted_by_employer
+from john_horton_hiring_scenarios.job_applications as ja
+left join "oDesk DB"."JobApplications" as odb_ja
+on odb_ja."Record ID#" = ja.application
+distributed by(application);
+
+alter table john_horton_hiring_scenarios.job_applications add column viewed_by_employer boolean;
+alter table john_horton_hiring_scenarios.job_applications add column hidden_by_employer boolean;
+alter table john_horton_hiring_scenarios.job_applications add column shortlisted_by_employer boolean;
+
+update john_horton_hiring_scenarios.job_applications as ja
+set
+  viewed_by_employer = ao.viewed_by_employer
+, hidden_by_employer = ao.hidden_by_employer
+, shortlisted_by_employer  = ao.shortlisted_by_employer
+from ats_outcomes as ao
+where ao.application = ja.application;
+
+------------------------------------
+-- APPLICATION OUTCOMES - INTERVIEWS
+------------------------------------
+
+drop table if exists interviews;
+create temp table interviews as
+select
+application
+, to_timestamp(mc."DateDeveloperReplied"/1000) as contractor_interview_decision_timestamp
+, to_timestamp(mc."DateCompanyReplied"/1000) as employer_interview_decision_timestamp
+, to_timestamp(mc."DateCommitGranted"/1000) as interview_commit_date
+from john_horton_hiring_scenarios.job_applications as ja
+join "oDesk DB"."JobApplications" as odb_ja
+on odb_ja."Record ID#" = ja.application
+left join "oDesk DB"."MutualCommit" as mc
+on mc."Record ID#" = odb_ja."Related Interview MutualCommit"
+distributed by(application);
+
+alter table john_horton_hiring_scenarios.job_applications add column contractor_interview_decision_timestamp timestamp;
+alter table john_horton_hiring_scenarios.job_applications add column employer_interview_decision_timestamp timestamp;
+alter table john_horton_hiring_scenarios.job_applications add column interview_commit_date timestamp;
+
+update john_horton_hiring_scenarios.job_applications as ja
+set
+contractor_interview_decision_timestamp  = i.contractor_interview_decision_timestamp 
+, employer_interview_decision_timestamp  = i.employer_interview_decision_timestamp 
+, interview_commit_date  = i.interview_commit_date 
+from interviews as i
+where i.application = ja.application;
+
+--------------------------------
+-- APPLICATION OUTCOMES - OFFERS
+--------------------------------
+
+drop table if exists offers;
+create temp table offers as
+select
+application
+, to_timestamp(mc."DateDeveloperReplied"/1000) as contractor_offer_decision_timestamp
+, to_timestamp(mc."DateCompanyReplied"/1000) as employer_offer_decision_timestamp
+, to_timestamp(mc."DateCommitGranted"/1000) as offer_commit_date
+from john_horton_hiring_scenarios.job_applications as ja
+join "oDesk DB"."JobApplications" as odb_ja
+on odb_ja."Record ID#" = ja.application
+left join "oDesk DB"."MutualCommit" as mc
+on mc."Record ID#" = odb_ja."Related Offer MutualCommit"
+distributed by(application);
+
+alter table john_horton_hiring_scenarios.job_applications add column contractor_offer_decision_timestamp timestamp;
+alter table john_horton_hiring_scenarios.job_applications add column employer_offer_decision_timestamp timestamp;
+alter table john_horton_hiring_scenarios.job_applications add column offer_commit_date timestamp;
+
+
+update john_horton_hiring_scenarios.job_applications as ja
+set
+contractor_offer_decision_timestamp  = o.contractor_offer_decision_timestamp 
+, employer_offer_decision_timestamp  = o.employer_offer_decision_timestamp 
+, offer_commit_date  = o.offer_commit_date 
+from offers as o
+where o.application = ja.application;
+
+------------------------------------
+-- APPLICATION OUTCOMES - EMPLOYMENT
+------------------------------------
+
+-- Notes: These are outcomes for the hired contractors 
+
+drop table if exists contract_outcomes;
+create table contract_outcomes as 
+select 
+application
+, sum(hours) as y_hours_worked
+, min(date) as y_first_day_worked
+--, max(date) as y_last_day_worked 
+, sum(case when foo.date is not null then 1 else 0 end) as y_number_assignment_observations
+, sum(total_charge) as y_total_charges
+from (  
+     select 
+      application
+     , asg.date
+     , hours	 
+     , total_charge
+     from john_horton_hiring_scenarios.job_applications as ja
+     left join agg.a_assignment as asg
+     on asg.opening = ja.opening and asg.contractor = ja.contractor) as foo
+group by application
+distributed by(application); 
+
+
+alter table john_horton_hiring_scenarios.job_applications add column y_hours_worked float;
+alter table john_horton_hiring_scenarios.job_applications add column y_first_day_worked date;
+--alter table john_horton_hiring_scenarios.job_applications add column y_last_day_worked  date;
+alter table john_horton_hiring_scenarios.job_applications add column y_number_assignment_observations int;
+alter table john_horton_hiring_scenarios.job_applications add column y_total_charges float;
+
+
+update john_horton_hiring_scenarios.job_applications as ja
+set
+ y_hours_worked = co.y_hours_worked
+--, y_first_day_worked = co.y_first_day_worked 
+, y_number_assignment_observations = co.y_number_assignment_observations
+, y_total_charges = co.y_total_charges
+from contract_outcomes as co
+where co.application = ja.application;
+
+
+-----------------------------------------------------
+-- CONTRACTOR/EMPLOYER PAST INTERACTIONS - EMPLOYMENT
+-----------------------------------------------------
+
+drop table if exists past_interactions; 
+create temp table past_interactions as 
+select
+ ja.application
+, sum(case when asg.hours is not null then asg.hours else 0 end) as past_hours_together
+, sum(case when asg.total_charge is not null then asg.total_charge else 0 end) as past_earnings_together
+, sum(case when assignment is not null then 1 else 0 end) as past_assignments_together
+from john_horton_hiring_scenarios.job_applications as ja
+left join agg.a_assignment as asg 
+on asg.contractor = ja.contractor and asg.employer = ja.employer
+and asg.date < ja.date 
+group by(application)
+distributed by(application); 
+
+alter table john_horton_hiring_scenarios.job_applications add column past_assignments_together int; 
+alter table john_horton_hiring_scenarios.job_applications add column past_earnings_together float; 
+alter table john_horton_hiring_scenarios.job_applications add column past_hours_together float; 
+
+update john_horton_hiring_scenarios.job_applications as ja
+set
+past_hours_together = pi.past_hours_together
+, past_earnings_together = pi.past_earnings_together
+, past_assignments_together = pi.past_assignments_together
+from past_interactions as pi
+where pi.application = ja.application; 
+
+--------------------------------------------------------------------
+-- CONTRACTOR/EMPLOYER PAST INTERACTIONS - APPLICATIONS & INTERVIEWS
+--------------------------------------------------------------------
+
+drop table if exists past_interactions_ja; 
+create temp table past_interactions_ja as 
+select
+ ja.application
+,sum(case when old_ja.application is not null and old_ja.createdtype = 'client' 
+  then 1 else 0 end) as past_job_invites_together
+,sum(case when old_ja.application is not null and old_ja.createdtype = 'professional' 
+  then 1 else 0 end) as past_job_applications_together
+from john_horton_hiring_scenarios.job_applications as ja
+left join agg.b_job_application as old_ja 
+on old_ja.contractor = ja.contractor and old_ja.employer = ja.employer
+and old_ja.date < ja.date 
+group by ja.application
+distributed by(application); 
+
+alter table john_horton_hiring_scenarios.job_applications add column past_job_invites_together int; 
+alter table john_horton_hiring_scenarios.job_applications add column past_job_applications_together float; 
+
+update john_horton_hiring_scenarios.job_applications as ja
+set
+past_job_invites_together = pi.past_job_invites_together
+, past_job_applications_together = pi.past_job_applications_together
+from past_interactions_ja as pi
+where pi.application = ja.application; 
+
+
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="REFACTOR">client_mkt-behavior_parent_openings.sql</p> creates: ['analytics.parent_openings']</a></h3>
+    <div><pre>
+    /*
+{
+"AUTHOR":"John J. Horton", 
+"PURPOSE":"Categorizes all of them openings.",
+"STATUS":"REFACTOR", 
+"CREATES":['analytics.parent_openings'],
+"NOTES":"""
+
+ISSUES:
+
+
+This code creates a table that classifies every opening into one of four buckets: 
+
+- original: This is a new, never-before-seen job post 
+- spawn_from_original: This is a hire made against an original job post 
+- repost: This is an original job *or* repost of a job that is is a de factor original job 
+- spawn_from_repost: This is a hire made against an original job post. 
+
+Note that it only works for jobs posted since ~summer 2010 (we think). 
+
+Some tests: 
+- The two spawn types should only have one associated job application. 
+    Status: PASS 
+    Note: Very close to 100% of jobs in modern period have exacty 1 application. 
+
+- Job Applications to spawned openings should be status 'filled'  
+    Status: PASS
+    Note: Very close to 100% of jobs applications are in the 'filled' status
+
+""" 
+}
+*/
+
+-- run dependencies 
+--\i market_mkt-outcomes_openings.sql 
+
+create temp table openings as 
+select
+         o."Company (ref)" as employer
+       , o."Record ID#" as opening
+       , to_timestamp(o."Date Created"/1000) as opening_date
+       , md5(o."Job Description" || o."Opening Title" ||  o."Company (ref)") as fingerprint
+from "oDesk DB"."Openings" as o
+distributed by(opening); 
+
+create temp table openings_reduced as 
+select 
+opening
+, employer
+, opening_date
+, min(opening) over (partition by fingerprint) as original_opening
+, min(opening) over (partition by fingerprint, opening_date) as base_opening_potentially_repost
+from openings 
+distributed by(opening); 
+
+drop table if exists analytics.parent_openings; 
+create table analytics.parent_openings as
+select 
+openings_reduced.*
+,case when 
+     opening = original_opening then 'original' 
+     when opening > original_opening 
+     	  and original_opening = base_opening_potentially_repost then 'spawn_from_original'
+     when opening = base_opening_potentially_repost and 
+     	  base_opening_potentially_repost > original_opening then 'repost'
+     when opening > base_opening_potentially_repost and 
+     	  base_opening_potentially_repost > original_opening then 'spawn_from_repost' 
+end as opening_type
+from openings_reduced 
+distributed by(opening); 
+
+drop table if exists economic_openings; 
+create temp table economic_openings as 
+select 
+opening
+, case when opening_type = 'original' then original_opening 
+     when opening_type = 'spawn_from_original' then original_opening
+     when opening_type = 'repost' then base_opening_potentially_repost
+     when opening_type = 'spawn_from_repost' then base_opening_potentially_repost
+    end as economic_opening 
+from analytics.parent_openings as o
+distributed by(opening); 
+
+alter table analytics.parent_openings add column economic_opening int; 
+
+update analytics.parent_openings as o
+set economic_opening = eo.economic_opening 
+from economic_openings as eo
+where eo.opening = o.opening; 
+  
+drop table if exists apps_per_spawned_opening; 
+create temp table apps_per_spawned_opening as
+select 
+  o.opening
+, o.opening_date 
+, sum(case when ja.application is null then 0 else 1 end) as num_job_applications
+from analytics.parent_openings as o
+left join agg.b_job_application as ja 
+on ja.opening = o.opening 
+where o.opening_type in ('spawn_from_original', 'spawn_from_repost')
+group by o.opening, o.opening_date 
+order by num_job_applications desc
+distributed by(opening);
+
+
+-- More than 1 applicant (wrong - should be 0)
+select (select sum(case when num_job_applications > 1 then 1 else 0 end) as bad 
+        from apps_per_spawned_opening)/ 
+(1.0 * (select count(*)  as bad from apps_per_spawned_opening)) as frac_bad; 
+
+/*
+Close enough! 
+
+          frac_bad          
+----------------------------
+ 0.000033882173202589214072
+(1 row)
+
+*/
+
+
+-- No applicants (wrong - should be 0)
+select (select sum(case when num_job_applications = 0 then 1 else 0 end) as bad 
+        from apps_per_spawned_opening)/ 
+(1.0 * (select count(*)  as bad from apps_per_spawned_opening)) as frac_bad; 
+/*
+Not good - about 1.6% of the spawned openings receive no applicants. There's a chance that this 
+because of how we used to do applications. 
+
+        frac_bad        
+------------------------
+ 0.01647905696671384503
+(1 row)
+*/
+
+select (select sum(case when num_job_applications = 0 then 1 else 0 end) as bad 
+        from apps_per_spawned_opening where opening_date > '2012-01-01')/ 
+(1.0 * (select count(*)  as bad from apps_per_spawned_opening where opening_date > '2012-01-01')) as frac_bad; 
+
+/*
+Yep -tht was it. When we look at a 'modern' period, the fraction of bad openings goes to zero. 
+          frac_bad          
+----------------------------
+ 0.000026727843731206984876
+(1 row)
+*/
+
+
+drop table if exists ja_status_check;
+create temp table ja_status_check as  
+select 
+ja.status as status
+, count(*) as num_openings 
+from apps_per_spawned_opening as o
+left join agg.b_job_application as ja
+on ja.opening = o.opening 
+where o.num_job_applications = 1
+group by ja.status; 
+
+/*
+Good enough! 
+
+ count  |  status   
+--------+-----------
+     18 | cancelled
+ 638548 | filled
+     21 | rejected
+(3 rows)
+
+*/
+
+
+-- All openings should have a type (they do?)
+select count(*) 
+from analytics.parent_openings 
+where opening_type is null; 
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="BAD">client_mkt-behavior_screening.sql</p> creates: ['analytics.employer_screening']</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "BAD", 
+ "PURPOSE": """Describe the employer's pool and screening choices""", 
+ "NOTES": """Fails some tests. """,
+ "CREATES": ['analytics.employer_screening'],
+ "DEPENDS": ['analytics.candidacy_timing'], 
+ "SETUP_SCRIPT": False
+}
+*/
+
+drop table if exists analytics.employer_screening; 
+create table analytics.employer_screening as 
+select 
+  opening
+, opening_created
+, opening_type
+, sum(case when createdtype = 'Professional' then 1 else 0 end) as num_organic_applicants 
+, sum(case when createdtype = 'Client' then 1 else 0 end) as num_invites  
+, sum(case when createdtype = 'Client' and contractor_interview_decision_timestamp is not null then 1 else 0 end) as     num_accepted_invites
+, sum(case when createdtype = 'Professional' and employer_interview_decision_timestamp is not null then 1 else 0 end) as num_interviewed_organic_applicants 
+, sum(case when createdtype = 'Client' and employer_offer_decision_timestamp is not null then 1 else 0 end) as       num_hired_invited_applicants
+, sum(case when createdtype = 'Professional' and employer_offer_decision_timestamp is not null then 1 else 0 end) as num_hired_organic_applicants 
+, max(interview_commit_date) as last_interview_commit_date
+, extract(epoch from (max(interview_commit_date) - opening_created)) as seconds_from_post_until_last_interview
+, extract(epoch from (min(interview_commit_date) - opening_created)) as seconds_from_post_until_first_interview
+, extract(epoch from (min(offer_commit_date) - opening_created)) as seconds_from_post_until_first_hire
+, extract(epoch from (max(offer_commit_date) - opening_created)) as seconds_from_post_until_last_hire
+from analytics.candidacy_timing
+group by opening, opening_created, opening_type 
+distributed by(opening); 
+
+-- Data Integrity Checks 
+
+-- Number of accepted invites cannot be greater than number of invites 
+select count(*) from analytics.employer_screening where num_accepted_invites > num_invites; 
+
+-- NUmber of hired invites cannot be greater than number of accepted invites 
+select count(*) from analytics.employer_screening where num_hired_invited_applicants > num_accepted_invites; 
+-- Wrong! This seems to happen regularly - why? 
+    </pre></div>
+    
+    <h3><a href="#"><p class="BAD">client_mkt-behavior_skill-rarity.sql</p> creates: []</a></h3>
+    <div><pre>
+    
+-- create skill-to-app counts table 
+
+drop table if exists apps_per_skill; 
+create temp table apps_per_skill as 
+select 
+skill 
+, avg(organic_applications) as mu_apps
+, stddev(organic_applications) as sd_apps
+, count(*) as num_observations 
+from (
+      select 
+      economic_opening
+      , organic_applications 
+      , regexp_split_to_table(odw_o."Required Skills", E',') as skill
+      from analytics.opening_outcomes as oo 
+      left join "oDesk DB"."Openings" as odw_o
+      on odw_o."Record ID#" = oo.economic_opening
+      where first_opening_date::date > '2012-01-01'
+      and organic_applications < 150) as foo
+group by skill 
+having count(*) > 30 
+distributed by(skill); 
+
+create temp table application_predictions as 
+select 
+  economic_opening
+, avg(mu_apps) as Ap_hat
+, avg(sd_apps) as sd_Ap_hat
+from (
+      select 
+      economic_opening
+      ,aps.* 
+      from (select
+            oo.economic_opening
+            , organic_applications
+            , regexp_split_to_table(odw_o."Required Skills", E',') as skill
+            from analytics.opening_outcomes as oo
+            left join "oDesk DB"."Openings" as odw_o
+            on odw_o."Record ID#" = oo.economic_opening
+            where first_opening_date::date > '2012-01-01' and organic_applications < 150) as foo 
+    left join apps_per_skill aps  
+    on aps.skill = foo.skill) 
+as bar
+group by economic_opening; 
+
+
+-- create temp table skills_list as 
+-- select 
+-- extract(month from opening_date) as month
+-- , opening_date
+-- , po.opening
+-- , regexp_split_to_table(o."Required Skills", E',') as skill
+-- from analytics.parent_openings as po
+-- left join "oDesk DB"."Openings" as o
+-- on po.opening = o."Record ID#" 
+-- left join analytics.opening_outcomes as oo 
+-- on oo.opening = 
+-- where opening_date::date > '2012-01-01'
+-- and po.opening = po.economic_opening 
+-- distributed by(opening); 
+
+-- drop table if exists skill_freq; 
+-- create temp table skill_freq as 
+-- select 
+-- skill
+-- , month
+-- , num_observations 
+-- , sum(num_observations) over (partition by month) as monthly_total
+-- , (1.0 * num_observations) / sum(num_observations) over (partition by month) as p
+-- , log((1.0 * num_observations) / sum(num_observations) over (partition by month)) as logp
+-- from (select 
+--        month
+--        , skill
+--        , count(*) as num_observations
+--        from skills_list
+--        group by skill, month 
+--        order by num_observations)
+-- as foo 
+-- order by month asc, p desc
+-- distributed by (skill);
+
+-- create temp table skill_rarity as 
+-- select 
+--   opening 
+-- , sum(logp) as sum_ll
+-- , max(logp) as max_ll
+-- , count(*) as num_skills 
+-- from skills_list as o
+-- left join skill_freq as sf
+-- on (o.skill, o.month) = (sf.skill, sf.month)
+-- group by opening; 
+
+
+
+drop table if exists datasets.skill_rarity; 
+create table datasets.skill_rarity as 
+select 
+  oo.*
+, ap.Ap_hat
+, ap.sd_Ap_hat
+, ao.employer
+, ao.type
+, ao.job_profile_access
+, jc."Level1" as level1 
+, jc."Level2" as level2
+, op_amount 
+, est_hours
+, total_charge 
+from application_predictions as ap
+left join analytics.opening_outcomes as oo
+on ap.economic_opening = oo.economic_opening
+left join agg.b_opening as ao
+on ao.opening = ap.economic_opening 
+left join "oDesk DB"."JobCategories" as jc 
+on jc."Record ID#" = ao.relatedjobcategory
+distributed by(economic_opening); 
+
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="BAD">client_mkt-outcomes_apps-per-opening.sql</p> creates: []</a></h3>
+    <div><pre>
+    DROP VIEW apps_per_opening; 
+
+CREATE VIEW apps_per_opening AS 
+SELECT 
+type
+, EXTRACT(year from date) AS year 
+, EXTRACT(month from date) AS month
+, application_count AS num_applicants 
+, relatedjobcategory
+FROM agg.b_opening
+WHERE type='hr' AND job_profile_access != 'private'
+AND application_count < 300
+
+/* This seems off
+\g ../data/apps_per_opening.txt
+
+SELECT 
+AVG(num_applicants) AS mean_apps
+, year
+, month
+FROM apps_per_opening
+GROUP BY year, month 
+ORDER BY year ASC, month ASC; 
+*/
+
+/* */
+\g ../data/diff_and_diff_apps_per_opening.txt
+
+SELECT * 
+FROM apps_per_opening 
+WHERE year=2008 AND (month = 6 OR month = 11)
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="REFACTOR">client_mkt-outcomes_history_at_time_of_job_application.sql</p> creates: []</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "REFACTOR", 
+ "PURPOSE": """Create a table of an employer's aggregate work history when they apply to a job.""", 
+ "NOTES": """ Clean up garbage """
+}
+*/
+
+drop table if exists analytics.employer_market_history; 
+create table analytics.employer_market_history as 
+select 
+employer
+, date
+, avg(rt_hours) as total_hours_worked_by_employer_to_date
+, avg(earnings) as total_earnings_by_employer_to_date
+from (
+select 
+  employer
+, date
+, sum(hours) over (partition by employer order by date asc) as rt_hours
+, sum(total_charge) over (partition by employer order by date asc) as earnings
+from agg.a_assignment) as foo
+group by employer, date 
+distributed by (employer); 
+
+drop table if exists prior_assignments; 
+create temp table prior_assignments as
+select 
+  mh1.employer
+, mh1.date 
+, count(distinct(assignment)) as num_assignments
+from analytics.employer_market_history as mh1 
+left join agg.a_assignment as asg
+on asg.employer = mh1.employer and mh1.date > asg.date
+group by mh1.employer, mh1.date
+distributed by(employer); 
+
+
+alter table analytics.employer_market_history add column total_num_assignments_by_employer_to_date int; 
+
+update analytics.employer_market_history as mh 
+set total_num_assignments_by_employer_to_date = pa.num_assignments 
+from prior_assignments as pa
+where pa.employer = mh.employer and pa.date = mh.date; 
+
+
+
+
+
+-- drop table if exists analytics.employer_experience_at_application_date; 
+-- create table analytics.employer_experience_at_application_date as
+-- select
+--   application
+-- , avg(hours) as hours
+-- , count(*) as duplications
+-- from (
+-- 	 select 
+-- 	   application
+-- 	 , ja.date as application_date 
+-- 	 , rt_hours as hours 
+-- 	 , rt.date as rt_date
+--          , max(rt.date) over (partition by application) as max_rt_date
+-- 	 from agg.b_job_application as ja, employer_running_total as rt
+-- 	 where rt.employer = ja.employer and ja.date > rt.date) as foo
+-- where foo.rt_date = foo.max_rt_date
+-- group by application
+-- distributed by (application); 
+ 
+
+--  ,sum(hours) as employer_hours
+-- , sum(hours) as employer_total_hours_worked_at_application 
+-- , sum(bonus) as employer_total_bonuses_at_application
+-- , sum(total_charge) as employer_total_earnings_at_application
+-- , sum(refund) as employer_total_refunds_made_at_application
+-- , count(distinct(assignment)) as employer_count_distinct_assignments_at_appliation
+-- , count(distinct(asg.contractor)) as employer_count_distinct_contractors_at_application
+-- from agg.b_job_application as ja
+-- left join agg.a_assignment as asg
+-- on asg.employer = ja.employer
+-- and asg.date < ja.date
+-- group by application 
+-- distributed by(application);  
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="OK">old_client_mkt-behavrio-hiring_dc.sql</p> creates: []</a></h3>
+    <div><pre>
+    /*
+{
+"STATUS":"OK"
+}
+*/
+-- Gets all the openings created during a period of time (January of this year)
+drop table if exists opening_cohort; 
+create table analytics.opening_cohort as 
+select 
+opening
+, status
+, date
+, employer
+, assignment_count
+, total_charge
+, application_count
+from agg.b_opening 
+where date > '2012-01-01' and date < '2012-02-01'
+and include_in_stats = 't'
+and application_count < 100 and status = 'filled' and 
+job_profile_access = 'public' 
+distributed by(opening, employer); 
+
+drop table if exists analytics.hiring_scenarios; 
+create table analytics.hiring_scenarios as
+select 
+ ja.date as application_date 
+,o.date as opening_date 
+,ja.application        
+,ja.contractor         
+,ja.employer           
+,ja.agency             
+,ja.opening            
+,ja.is_ic              
+,ja.created_by         
+,ja.off_the_network    
+,ja.status             
+,ja.createdtype        
+,ja.job_type           
+,ja.include_in_stats   
+,ja.initiated_by       
+,ja.interview_date     
+,ja.hire_date          
+,ja.invmc_dev_reply    
+,ja.invmc_comp_reply   
+,ja.offermc_dev_reply  
+,ja.offermc_comp_reply 
+,ja.candidacy_exp_date 
+, to_timestamp(odb_ja."Date Created"/1000) as application_ts 
+, rank() over(partition by o.opening order by odb_ja."Date Created") as arrival_rank
+, (odb_ja."Date Created"/1000 - odb_o."Date Created"/1000) as delta_seconds
+, odb_ja."Hourly Charge Rate" as wage_bid 
+, avg(odb_ja."Hourly Charge Rate") over(partition by o.opening 
+  		     order by odb_ja."Date Created") as running_wage_bid_inclusive 
+, odb_ja."IsShortlisted" AS short_listed 
+, odb_ja."HasViewedByBuyer" AS viewed_by_employer
+, avg(odb_ja."Hourly Charge Rate") over(partition by o.opening) AS mean_wage_bid 
+, stddev(odb_ja."Hourly Charge Rate") over(partition by o.opening) AS sigma_wage_bid 
+, sum(case when odb_ja."InterviewRequestDate" is null 
+	  then 0 
+	  else 1 end) 
+	  over(partition by o.opening) AS num_interviewed
+, sum(case when odb_ja."Status" = 'Filled' 
+  	   then 1 
+	   else 0 
+	   end) over(partition by o.opening) AS num_hired
+,count(*) over(partition by o.opening) AS num_candidates
+,sum(case when odb_ja."CreatedType" = 'Client' 
+	  then 1 
+	  else 0 
+	  end) over(partition by o.opening) AS num_invites
+,sum(case when odb_ja."CreatedType" = 'Professional' 
+	  then 1 
+	  else 0 
+	  end) over(partition by o.opening 
+	       order by odb_ja."Date Created") as num_prior_applicants_inclusive 
+from agg.b_job_application as ja
+join opening_cohort as o
+on ja.opening = o.opening
+left join "oDesk DB"."JobApplications" odb_ja
+on odb_ja."Record ID#" = ja.application
+left join "oDesk DB"."Openings" as odb_o 
+on odb_o."Record ID#" = o.opening
+distributed by(contractor,application,opening); 
+
+
+
+
+drop table if exists analytics.contractor_earnings_history; 
+create table analytics.contractor_earnings_history as 
+select 
+ja.contractor
+, ja.application  
+, coalesce(count(distinct(assignment)),0) as assignment_count 
+, coalesce(sum(asg.total_charge),0) as prior_earnings
+, coalesce(sum(bonus),0) as prior_bonus
+, coalesce(sum(hours),0) as prior_hours 
+, coalesce(sum(hours_offline),0) as prior_offline_hours  
+, coalesce(sum(hours),0) as c_prior_hours 
+from agg.b_job_application as ja 
+left join agg.a_assignment as asg
+on asg.contractor = ja.contractor 
+and ja.date > asg.date 
+group by ja.contractor, ja.application
+order by contractor asc, application asc
+distributed by(contractor, application);  
+
+
+
+
+
+
+
+
+
+
+drop table if exists analytics.earnings_history; 
+create table analytics.earnings_history as 
+select 
+hs.contractor
+, hs.application_ts
+, hs.application  
+, coalesce(count(distinct(assignment)),0) as assignment_count 
+, coalesce(sum(asg.total_charge),0) as prior_earnings
+, coalesce(sum(bonus),0) as prior_bonus
+, coalesce(sum(hours),0) as prior_hours 
+, coalesce(sum(hours_offline),0) as prior_offline_hours  
+, coalesce(sum(hours),0) as c_prior_hours 
+from analytics.hiring_scenarios as hs
+left join agg.a_assignment as asg
+on asg.contractor = hs.contractor 
+and hs.application_date > asg.date 
+group by hs.contractor, hs.application, hs.application_ts  
+order by contractor asc, application_ts asc
+distributed by(contractor, application);  
+
+
+
+
+
+drop table analytics.feedback_history;
+create table analytics.feedback_history as
+select 
+     hs.contractor
+    ,hs.application 
+    ,sum(fb."Provider Total Score" * asg.total_charge)/sum(total_charge) as score
+from analytics.hiring_scenarios as hs
+left join agg.b_assignment as asg
+on hs.contractor = asg.contractor
+left join "oDesk DB"."Feedbacks" as fb 
+on asg.assignment = fb."Related Assignment" 
+and fb."Date Created" < hs.application_ts
+and asg.end_date is not null and asg.total_charge > 0.0
+group by hs.contractor, hs.application
+distributed by(contractor, application); 
+
+
+drop table if exists analytics.hiring_scenarios_with_earnings; 
+create table analytics.hiring_scenarios_with_earnings as
+select 
+hs.*
+, prior_earnings 
+, prior_bonus 
+, prior_offline_hours 
+, c_prior_hours 
+, dev."Country" as country 
+, educ_history.educ
+, fb.score 
+from analytics.hiring_scenarios as hs
+left join analytics.earnings_history eh 
+on (hs.contractor, hs.application) = (eh.contractor, eh.application)
+left join "oDesk DB"."Developers" as dev 
+on dev."Record ID#" = hs.contractor 
+left join analytics.contractor_years_education as educ_history
+on educ_history.contractor = hs.contractor
+left join analytics.feedback_history as fb
+on (fb.contractor, fb.application) = (hs.contractor, hs.application)
+distributed by(contractor, application); 
+
+
+-- eligible workers 
+drop table if exists analytics.hs_eligible_workers;
+create table analytics.hs_eligible_workers as 
+select distinct(contractor) 
+from analytics.hiring_scenarios_with_earnings
+distributed by(contractor); 
+
+-- pure copy cover letter approach 
+drop table if exists analytics.exact_duplicate_cover_letters; 
+create table analytics.exact_duplicate_cover_letters as
+select 
+contractor
+, ja."Record ID#" as application 
+, count(*) over (partition by contractor,"Message") as unique_count  
+from analytics.hs_eligible_workers as ew
+join "oDesk DB"."JobApplications" AS ja
+on ja."Developer (ref)" = ew.contractor 
+join "oDesk DB"."AssignmentMessages" AS asm
+on asm."Record ID#" = ja."Related AssignmentMessage for Candidate Referral Cover Letter"
+and "Related AssignmentMessage for Candidate Referral Cover Letter"  is not null
+distributed by(contractor, application); 
+
+
+
+drop table if exists analytics.hiring_scenarios_with_feedback; 
+create table analytics.hiring_scenarios_with_feedback as
+select 
+hse.*
+, fb.weighted_score
+--, aq.frac_original
+--, e.entropy 
+--, e.num_sentences
+, dup.unique_count
+from analytics.hiring_scenarios_with_earnings as hse
+left join analytics.hiring_scenario_feedbacks as fb
+on (fb.application_ts, fb.contractor) = (hse.application_ts, hse.contractor)
+--left join analytics.application_quality_limited as aq
+--on aq.job_application = hse.application
+left join analytics.exact_duplicate_cover_letters as dup
+on dup.application = hse.application
+distributed  by(contractor, application);  
+
+-- test 
+-- Application counts should match 
+select case when 
+(select sum(application_count) from opening_cohort) - 
+(select count(*) from analytics.hiring_scenarios) = 0 
+then 'pass' else 'fail' 
+end as outcome;
+
+-- test 
+-- Number of fills should (probably match - what about multiple hires?)
+select case when 
+(select sum(case when status = 'filled' then 1 else 0 end) as fills
+from opening_cohort) = (
+select sum(case when status = 'filled' then 1 else 0 end) as fills
+from analytics.hiring_scenarios) then 'pass' else 'fail' end as outcome; 
+
+-- number of unique employers should be the same 
+-- Why do employer counts differ? 
+--select count(distinct(employer)) from opening_cohort; 
+--select count(distinct(employer)) from analytics.hiring_scenarios; 
+
+--test
+select case when 
+(select sum(contractor) from analytics.earnings_history) = 
+(select sum(contractor) from analytics.hiring_scenarios) 
+then 'pass' else 'fail' end as outcome; 
+
+--test
+select case when 
+(select sum(application) from analytics.earnings_history) = 
+(select sum(application) from analytics.hiring_scenarios) 
+then 'pass' else 'fail' end as outcome; 
+
+-- test 
+select case when 
+(select sum(application) from analytics.hiring_scenarios_with_earnings) = 
+(select sum(application) from analytics.hiring_scenarios) 
+then 'pass' else 'fail' end as outcome; 
+
+-- test  
+select case when (select sum(contractor) from analytics.feedback_history) = 
+(select sum(contractor) from analytics.hiring_scenarios) then 'pass' else 'fail' end 
+as outcome; 
+
+
+-- -- entropy based 
+drop table if exists analytics.target_messages; 
+create table analytics.target_messages as
+select  
+ contractor 
+,case when ja."CreatedType" = 'Professional' 
+      then 't' else 'f' end as application 
+,ja."Record ID#" AS job_application 
+,ja."Date Created" AS event_ts 
+,ja."Related AssignmentMessage for Candidate Referral Cover Letter" AS clid
+,ja."Related JobCategory" as category_index  
+,ja."Related Opening" as opening 
+,jc."Level1" as level1
+,jc."Level2" as level2 
+from "oDesk DB"."JobApplications" AS ja
+join eligible_workers
+on ja."Developer (ref)" = contractor 
+and "Related AssignmentMessage for Candidate Referral Cover Letter"  is not null
+left join "oDesk DB"."JobCategories" as jc 
+on jc."Record ID#" = ja."Related JobCategory";
+
+-- -- entropy-based calculation 
+drop table if exists analytics.contractor_alphabet; 
+create table analytics.contractor_alphabet as 
+select 
+ contractor
+, sentence 
+, count(*) as sentence_count
+, sum(count(*)) over (partition by contractor) as total_sentences
+, count(*) over (partition by contractor) as num_unqiue_sentences
+from 
+(select 
+        contractor
+      , md5(regexp_split_to_table("Message", E'\\.')) as sentence
+from analytics.target_messages 
+left join "oDesk DB"."AssignmentMessages" AS asm
+on asm."Record ID#" = clid) as foo
+group by contractor, sentence;  
+
+
+
+
+-- -- split up cover letters actually sent 
+-- drop table if exists analytics.hiring_scenario_sentences; 
+-- create table analytics.hiring_scenario_sentences as 
+-- select 
+--         contractor
+--       , application 
+--       , md5(regexp_split_to_table("Message", E'\\.')) as sentence
+-- from analytics.hiring_scenarios as hs
+-- join "oDesk DB"."JobApplications" AS ja
+-- on ja."Record ID#" = hs.application 
+-- join "oDesk DB"."AssignmentMessages" AS asm
+-- on asm."Record ID#" = ja."Related AssignmentMessage for Candidate Referral Cover Letter"
+-- and "Related AssignmentMessage for Candidate Referral Cover Letter"  is not null;
+
+-- drop table if exists analytics.hiring_scenario_entropy; 
+-- create table analytics.hiring_scenario_entropy as 
+-- select 
+-- s.contractor
+-- ,s.application
+-- ,-sum((sentence_count/(1.0*total_sentences)) * log((sentence_count/(1.0*total_sentences)))) as entropy 
+-- , count(*) as num_sentences
+-- from analytics.hiring_scenario_sentences as s
+-- left join analytics.contractor_alphabet as a
+-- on (a.contractor, a.sentence) = (s.contractor, s.sentence)
+-- group by s.contractor, s.application; 
+
+
+--left join analytics.hiring_scenario_entropy as e
+--on (e.contractor, e.application) = (hse.contractor, hse.application)
+
+
+/*Expand to sentences & then hash */ 
+-- drop table if exists analytics.all_sentences; 
+-- create table analytics.all_sentences as 
+-- select 
+--   contractor
+-- , application 
+-- , job_application
+-- , event_ts
+-- , sentences 
+-- ,count(*) over (partition by contractor, sentences order by event_ts) - 1 
+--       as times_prior
+--  , category_index  
+-- , opening 
+-- , level1
+-- , level2      
+-- from (
+--       select 
+--        contractor
+--       , application  
+--       , job_application 
+--       , event_ts  
+--       , md5(regexp_split_to_table("Message", E'\\.')) as sentences
+--       , category_index  
+--       , opening 
+--       , level1
+--       , level2 
+--       from analytics.target_messages 
+--       left join "oDesk DB"."AssignmentMessages" AS asm
+--       on asm."Record ID#" = clid 
+--       order by contractor, event_ts asc) as t; 
+
+
+--1849 workers 
+--938,417 cover letters 
+--average of 507 applications per??? Seems really high. Nope - that's right. 
+--17,536,574 sentences. 
+
+-- drop table if exists analytics.application_quality_limited;
+-- create table analytics.application_quality_limited as 
+-- select ac.*, 
+--        o.application_count  
+-- from (
+--     select 
+--       contractor
+--     , event_ts 
+--     , application 
+--     , job_application 
+--     , sum(case when times_prior = 0 
+-- 	       then 1.0 
+-- 	       else 0.0 
+-- 	       end)/count(*) as frac_original
+--     , category_index  
+--     , opening 
+--     , level1
+--     , level2 
+--     from (
+--     select sen.* 
+--     from analytics.all_sentences as sen  
+--     join analytics.hiring_scenarios_with_earnings as hs
+--     on sen.job_application = hs.application 
+--     ) as foo  
+--     group by 
+--     contractor
+--     , application
+--     , job_application
+--     , category_index
+--     , opening
+--     , level1
+--     , level2
+--     , event_ts) as ac 
+-- left join agg.c_opening as o
+-- on o.opening = ac.opening; 
+
+-- Get other worker attributes 
+
+-- select count(*)
+-- from agg.a_assignment as asg
+-- where contractor in (select contractor from analytics.hiring_scenarios); 
+
+
+/* 
+Next challenge - getting all the contractor-relevant information 
+*/
+
+/* This gets their hours of experience at the time they 
+applied. It workers by joining the contractors & their application
+times with the table of running totals of hours worked, where the 
+application date is after the hours observations. It then uses 
+a window function to find the hours observation closest to the 
+application time and uses that.*/
+-- SELECT * 
+-- FROM (
+--   SELECT  
+--    hs.worker AS worker
+--   ,hs.application_time AS application_date
+--   , hours.running_total 
+--   , hours.datetime AS hours_datetime
+--   , MAX(hours.datetime) OVER 
+--      (PARTITION BY hs.worker, hs.application_time) AS max_hours
+--   FROM hiring_scenarios AS hs
+--   LEFT JOIN worker_hours_by_date AS hours
+--   ON hours.worker = hs.worker AND hs.application_time > hours.datetime 
+-- ) AS t
+-- WHERE t.max_hours = t.hours_datetime
+
+
+
+-- drop table if exists analytics.feedback_history;  
+-- create table analytics.feedback_history as 
+-- select 
+-- * 
+-- , case when total > 0 then rt/total else NULL end as weighted_score 
+-- from  
+-- (
+-- select 
+--  contractor
+-- ,assignment 
+-- ,score
+-- ,date_fb_posted 
+-- ,status
+-- ,sum(total_charge * score) over 
+--  	  (partition by contractor order by date_fb_posted asc) as rt
+-- ,sum(total_charge) over 
+--  	  (partition by contractor order by date_fb_posted asc) as total
+-- from (
+--    select 
+--     c.contractor
+--     ,asg.total_charge
+--     ,asg.assignment
+--     ,asg.status 
+--     ,fb."Provider Total Score" as score
+--     ,date(to_timestamp(fb."Date Created"/1000)) as date_fb_posted 
+--    from "oDesk DB"."Feedbacks" as fb 
+--    join agg.b_assignment as asg
+--    on asg.assignment = fb."Related Assignment" 
+--    join agg.b_contractor as c 
+--    on c.contractor = asg.contractor
+--    where asg.end_date is not null 
+--    and asg.total_charge > 0.0 
+-- ) as foo
+-- order by contractor, date_fb_posted asc) as bar
+-- order by contractor asc, date_fb_posted asc;
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="BAD">panel_clients.sql</p> creates: []</a></h3>
+    <div><pre>
+    /*
+{
+"AUTHOR":"John Horton",
+"STATUS":"REFACTOR"
+"PURPOSE":"""Created a daily panel of employer behaviors that captures main marketplace activities relating to posting vacancies, 
+recruiting candididates, processing vacancies and having work completed. To make a more useful panel, one can simply collapse 
+by different time units."""
+"NOTES":"Currently it consists of just the clients created on a single day. "
+}
+*/
+
+drop table if exists employer_panel_skeleton; 
+create table employer_panel_skeleton as 
+select 
+employer, dd.date
+from agg.b_employer as e
+join  "oDesk DB".date_dim as dd
+on 1 = 1 
+where e.signup_date = '2011-01-05' and 
+dd.date > '2011-01-01' and dd.date < '2012-07-01'
+and e.signup_date > dd.date 
+distributed by(employer); 
+ 
+
+drop table if exists analytics.employer_panel; 
+create table analytics.employer_panel as
+select 
+  s.employer
+, s.date
+, count(distinct(o.opening)) as num_openings
+, count(distinct(case when ja.createdtype = 'client' then ja.application else null end)) as num_invites 
+, count(distinct(case when ja.createdtype = 'professional' then ja.application else null end)) as num_applications 
+, count(distinct(asg.assignment)) as contracts_worked 
+, sum(asg.hours) as hours_worked 
+-- , asg.assignment
+-- , asg.hours 
+-- , asg.contractor 
+-- , ja.application 
+from employer_panel_skeleton as s
+left join agg.b_opening as o 
+on o.employer = s.employer and o.date = s.date
+left join agg.a_assignment as asg
+on asg.date = s.date and s.employer = asg.employer
+left join agg.b_job_application as ja
+on ja.employer = s.employer and ja.date = s.date
+group by s.employer, s.date
+order by employer, date asc
+distributed by(employer); 
+
+drop table if exists df;  
+create temp table df as 
+select 
+employer
+,date 
+,sum(num_openings) over (partition by employer order by date) as openings_to_date
+from analytics.employer_panel; 
+
+
+    </pre></div>
+    
+    </div>
+     
+    <h1>market</h1>
+    <div id="market_accordion">
+    
+    <h3><a href="#"><p class="BAD">market_composition_invites_applications_interviews.sql</p> creates: []</a></h3>
+    <div><pre>
+    
+-- How many applications were sent on March 15, 2012?
+select count(*)
+from agg.b_job_application
+where date = '2012-03-15'; 
+/*
+ count 
+-------
+ 61551
+*/ 
+
+
+-- How many of these where invitations to apply? 
+select count(*)
+from agg.b_job_application
+where date = '2012-03-15'
+and createdtype = 'client' ; 
+/*
+ count 
+-------
+  7677
+*/
+
+
+--How many distinct jobs were those associated with? 
+select count(distinct(opening))
+from agg.b_job_application
+where date = '2012-03-15'
+and createdtype = 'client' ; 
+
+
+
+-- Openings that both invited people but also received non-invited applicants 
+select 
+count(*) 
+from (
+      select 
+        opening 
+       ,count(*) as num_total 
+       ,sum(invite) as num_invites
+       from (
+	 select 
+	 opening
+	 ,case when createdtype = 'client' then 1 else 0 end as invite
+	 from agg.b_job_application
+	 where date = '2012-03-15') as foo
+group by opening) as bar
+where num_total > num_invites and num_invites > 0; 
+
+-- condition the response rate on the number of applicants sent by employer 
+select 
+invites_per_opening
+, avg(responded) as response_rate
+, count(distinct(opening)) as num_openings
+from (
+       select 
+       opening 
+       ,case when invmc_dev_reply is null 
+	    then 0 
+	    else 1 end as responded 
+       ,count(*) over(partition by opening) as invites_per_opening 
+       from agg.b_job_application
+       where date = '2012-03-15'
+       and createdtype = 'client') as foo
+group by invites_per_opening 
+order by invites_per_opening asc; 
+
+
+-- What categories are these invitations in? 
+select 
+jc."Level1" as main_cat 
+, count(*) as num_invitations 
+from agg.b_job_application as ja 
+left join agg.b_opening as o
+on o.opening = ja.opening 
+join "oDesk DB"."JobCategories" as jc
+on jc."Record ID#" = o.relatedjobcategory 
+where ja.date = '2012-03-15'and ja.createdtype = 'client' 
+group by jc."Level1"
+order by num_invitations desc; 
+
+-- Are invited workers positively selected compared to non-invited workers? 
+-- Let's compared whether they have ever worked before 
+
+-- get workers that were invited/applied 
+select 
+    createdtype
+    ,avg(prior_exper)
+from (
+    select 
+      ja.contractor 
+    , ja.createdtype  
+    , case when hours > 0 then 1 else 0 end as prior_exper
+    from agg.b_job_application as ja 
+    join agg.b_contractor as c
+    on c.contractor = ja.contractor 
+    where date = '2012-03-15') as foo 
+group by createdtype; 
+ 
+
+--Fill rate by response rate  
+select 
+ avg(response_rate) as average_response_rate
+,filled 
+,avg(num_invites) as average_num_invites 
+from ( 
+select 
+foo.opening
+, avg(filled) as filled
+, count(*) as num_invites 
+, avg(responded) as response_rate 
+       from (
+       select 
+       o.opening 
+       , case when o.status = 'filled' then 1 else 0 end as filled 
+       ,case when invmc_dev_reply is null 
+	    then 0 
+	    else 1 end as responded 
+       from agg.b_job_application as ja
+       left join agg.b_opening as o 
+       on o.opening = ja.opening 
+       where ja.date = '2012-03-15'
+       and  ja.createdtype = 'client') as foo
+group by opening) as bar
+where num_invites > 1 and num_invites < 10
+group by filled;   
+
+
+-- are there ever profile URLs in oDesk cover letters responses? 
+select 
+avg(any_url) as any_url 
+, avg(odesk_url) as odesk_url 
+, avg(odesk_profile_url) as odesk_profile_url 
+from (
+     select 
+     case when cl."Message" LIKE '%http://%' 
+     	  then 1 
+	  else 0 
+	  end as any_url 
+     ,case when cl."Message" SIMILAR TO E'%htt(p|ps)://www.odesk.com%' 
+     	   then 1 
+	   else 0 
+	   end as odesk_url 
+     ,case when cl."Message" SIMILAR TO E'%htt(p|ps)://www\.odesk\.com/users/%' 
+     	   then 1 
+	   else 0 
+	   end as odesk_profile_url 
+     from "oDesk DB"."JobApplications"  as ja
+     join "oDesk DB"."AssignmentMessages" as cl
+     on ja."Related AssignmentMessage for Candidate Referral Cover Letter" = 
+     		    		      cl."Record ID#"
+     where ja."CreatedType" = 'Client' limit 100000
+) as foo; 
+
+
+
+
+
+
+
+select 
+  opening 
+, count(*) as num_sent 
+from agg.b_job_application
+where date = '2012-03-15'
+and createdtype = 'client' 
+group by 1;  
+
+
+
+
+
+-- Of these, how many are declined versus accepted? 
+select 
+case when invmc_dev_reply is null 
+     then 'no response' 
+     else 'response' end as worker_action
+, count(*)
+from agg.b_job_application
+where date = '2012-03-15'
+and createdtype = 'client' 
+group by 1;  
+/*
+ worker_action | count 
+---------------+-------
+ response      |  4373
+ no response   |  3304
+*/
+
+-- What's the distribution of invites per worker & response rates? 
+select 
+num_invites as num_invites_per_worker
+,count(*) as worker_count 
+,avg(response_rate) as mean_response_rate
+from (
+      select 
+      contractor
+      ,count(*) as num_invites
+      ,sum(case when invmc_dev_reply is null 
+                then 0 
+     		else 1 end)/count(*) as response_rate
+      from agg.b_job_application 
+      where date = '2012-03-15'
+      and createdtype = 'client' 
+      group by contractor 
+      ) as t
+group by num_invites_per_worker
+order by num_invites_per_worker asc limit 20; 
+/*
+ num_invites_per_worker | worker_count | mean_response_rate 
+------------------------+--------------+--------------------
+                      1 |         5853 |  0.552024602767811
+                      2 |          586 |  0.486348122866894
+                      3 |          103 |  0.446601941747573
+                      4 |           32 |             0.4375
+                      5 |           14 |  0.285714285714286
+                      6 |            8 |               0.25
+                      7 |            3 |                  0
+                      8 |            2 |                0.5
+                      9 |            1 |                  0
+                     11 |            1 |                  0
+                     17 |            1 |                  0
+                     23 |            1 |                  0
+*/
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="OK">market_mkt-outcomes_opening-time-on-top.sql</p> creates: ['analytics.time_on_top']</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "OK", 
+ "PURPOSE": """Computes the time that a job was on top """, 
+ "NOTES": """""",
+ "CREATES":['analytics.time_on_top']
+}
+*/
+
+-- select 
+-- "Opening Title" 
+-- from 
+-- agg.b_opening as o
+-- join "oDesk DB"."Openings" as odb_o
+-- on odb_o."Record ID#" = o.opening 
+-- where date = '2012-07-25'
+-- and job_profile_access != 'private'
+-- order by opening desc limit 100;  
+
+drop table if exists time_on_top_openings; 
+create table time_on_top_openings as
+select   
+         o.employer as employer
+       , o.opening 
+       , o.opening_type
+       , o.economic_opening 
+       , oo."JobType" as job_type      
+       , jc."Level1" as level1
+       , jc."Level2" as level2
+       , o.opening_date
+       , oo."JobProfileAccessOverride" as vis
+, extract(epoch from opening_date - lag(opening_date) over 
+  		(order by opening_date asc) ) as time_delta_firehose
+, extract(epoch from opening_date - lag(opening_date) over 
+  		(partition by "Level1" order by opening_date asc) ) as time_delta_level1
+, extract(epoch from opening_date - lag(opening_date) over 
+  		(partition by "Level2" order by opening_date asc) ) as time_delta_level2
+, extract(epoch from opening_date - lag(opening_date)  over 
+  		(order by opening_date desc) ) as f_time_delta_firehose
+, extract(epoch from opening_date - lag(opening_date) over 
+  		(partition by "Level1" order by opening_date desc) ) as f_time_delta_level1
+, extract(epoch from opening_date - lag(opening_date) over 
+  		(partition by "Level2" order by opening_date desc) ) as f_time_delta_level2
+from analytics.parent_openings as o
+left join "oDesk DB"."Openings" as oo
+on oo."Record ID#" = o.opening 
+left join "oDesk DB"."JobCategories" as jc
+on jc."Record ID#" = oo."Related JobCategory"
+where "JobProfileAccessOverride" != 'private'
+and opening = economic_opening 
+distributed by(opening); 
+
+--and opening_type in ('repost','original') 
+
+
+drop table if exists analytics.time_on_top;
+create table analytics.time_on_top as
+select 
+ time_delta_level2
+, time_delta_level1
+, time_delta_firehose
+, level1
+, level2
+, job_type
+, tot.economic_opening as tot_economic_opening 
+, opening_date
+, extract(day from opening_date) as day
+, extract(hour from opening_date) as hour
+, extract(dow from opening_date) as dow
+, extract(month from opening_date) as month 
+, oo.*
+from time_on_top_openings as tot
+left join analytics.opening_outcomes as oo
+on oo.economic_opening = tot.economic_opening
+distributed by(economic_opening); 
+
+
+-- drop table if exists analytics.time_on_top_applications; 
+-- create table analytics.time_on_top__applications as 
+-- select 
+-- o.*
+-- , o2.level1
+-- , o2."Level2"
+-- , o2.job_desc_length
+-- , o2.odesk_hours_pref
+-- , min(o.opening) over (partition by o.fingerprint) as original_opening
+-- , ja.createdtype 
+-- , ja.application
+-- , to_timestamp(odb_ja."Date Created"/1000) as application_date
+-- , ja.status as job_application_status 
+-- , rank() over (partition by o.opening order by odb_ja."Date Created" asc) as arrival_rank
+-- , odb_ja."HasViewedByBuyer" as viewed_by_employer
+-- , ja.invmc_dev_reply
+-- , ja.interview_date
+-- , ja.hire_date 
+-- , ja.is_ic 
+-- , to_timestamp(odb_ja."HireRequestDate"/1000) as hire_request_date 
+-- , to_timestamp(odb_ja."InterviewRequestDate"/1000) as interview_request_date
+-- , odb_ja."Related Offer MutualCommit" as rel_offer_mc_id 
+-- , odb_ja."Related Interview MutualCommit" as rel_interview_mc_id
+-- from analytics.time_on_top_openings as o
+-- left join agg.b_job_application as ja
+-- on o.opening = ja.opening 
+-- join "oDesk DB"."JobApplications" as odb_ja
+-- on odb_ja."Record ID#" = ja.application
+-- left join analytics.time_on_top_openings as o2 
+-- on o2.fingerprint = o.fingerprint
+-- distributed by(application); 
+
+
+-- select 
+-- "Opening Title" 
+-- from 
+-- agg.b_opening as o
+-- join "oDesk DB"."Openings" as odb_o
+-- on odb_o."Record ID#" = o.opening 
+-- where date = '2012-07-25'
+-- and job_profile_access != 'private'
+-- order by opening desc limit 100;  
+
+
+drop table if exists analytics.time_on_top_openings; 
+create table analytics.time_on_top_openings as
+select   
+         o.employer as employer
+       , o.opening 
+       , o.total_charge
+       , oo."JobProfileAccessOverride" as visibility
+       , oo."JobType" as job_type
+       , oo."Opening Title" as opening_title
+       , to_timestamp(oo."Date Created"/1000) as opening_date
+       , md5(oo."Job Description" || oo."Opening Title" ||  o.employer) as fingerprint
+       , jc."Level1" as level1
+       , jc."Level2" as level2
+       , status
+from agg.b_opening as o 
+left join "oDesk DB"."Openings" as oo
+on oo."Record ID#" = o.opening 
+left join "oDesk DB"."JobCategories" as jc
+on jc."Record ID#" = o.relatedjobcategory
+where 1=1 
+and o.date > '2012-01-24'
+and "JobProfileAccessOverride" != 'private'
+distributed by(opening); 
+
+-- select 
+--   fingerprint
+-- , min(opening) as original_opening
+-- , count(*) as num_openings
+-- from analytics.time_on_top_openings
+-- group by fingerprint; 
+
+
+-- Time on Top 
+drop table if exists lags; 
+create temp table lags as 
+select 
+fingerprint
+, level1
+, level2
+, min(o.opening) as original_opening 
+, min(o.opening_date) as time_posted
+, count(distinct(ja.application)) as num_candidates 
+, sum(case when ja.createdtype = 'professional' then 1 else 0 end) as num_apps
+, sum(case when ja.status = 'filled' then 1 else 0 end) as num_hired
+from analytics.time_on_top_openings as o
+left join agg.b_job_application as ja
+on ja.opening = o.opening 
+group by fingerprint, level1, level2; 
+
+
+
+select count(*) from lags join agg.c_opening as co on 
+co.opening = lags.original_opening; 
+
+
+drop table if exists analytics.time_on_top_results; 
+create table analytics.time_on_top_results as
+select 
+  fingerprint
+, time_posted 
+, level1
+, level2 
+, num_hired
+, num_apps
+, num_candidates
+, extract(day from time_posted) as day
+, extract(hour from time_posted) as hour
+, extract(dow from time_posted) as dow
+, original_opening 
+, extract(epoch from time_posted - lag(time_posted) over 
+  		(order by time_posted asc) ) as time_delta_firehose
+, extract(epoch from time_posted - lag(time_posted) over 
+  		(partition by level1 order by time_posted asc) ) as time_delta_level1
+, extract(epoch from time_posted - lag(time_posted) over 
+  		(partition by level2 order by time_posted asc) ) as time_delta_level2
+, extract(epoch from time_posted - lag(time_posted)  over 
+  		(order by time_posted desc) ) as f_time_delta_firehose
+, extract(epoch from time_posted - lag(time_posted) over 
+  		(partition by level1 order by time_posted desc) ) as f_time_delta_level1
+, extract(epoch from time_posted - lag(time_posted) over 
+  		(partition by level2 order by time_posted desc) ) as f_time_delta_level2
+from lags; 
+
+
+drop table if exists analytics.time_on_top_applications; 
+create table analytics.time_on_top__applications as 
+select 
+o.*
+, o2.level1
+, o2.level2
+, o2.job_desc_length
+, o2.odesk_hours_pref
+, min(o.opening) over (partition by o.fingerprint) as original_opening
+, ja.createdtype 
+, ja.application
+, to_timestamp(odb_ja."Date Created"/1000) as application_date
+, ja.status as job_application_status 
+, rank() over (partition by o.opening order by odb_ja."Date Created" asc) as arrival_rank
+, odb_ja."HasViewedByBuyer" as viewed_by_employer
+, ja.invmc_dev_reply
+, ja.interview_date
+, ja.hire_date 
+, ja.is_ic 
+, to_timestamp(odb_ja."HireRequestDate"/1000) as hire_request_date 
+, to_timestamp(odb_ja."InterviewRequestDate"/1000) as interview_request_date
+, odb_ja."Related Offer MutualCommit" as rel_offer_mc_id 
+, odb_ja."Related Interview MutualCommit" as rel_interview_mc_id
+from analytics.time_on_top_openings as o
+left join agg.b_job_application as ja
+on o.opening = ja.opening 
+join "oDesk DB"."JobApplications" as odb_ja
+on odb_ja."Record ID#" = ja.application
+left join analytics.time_on_top_openings as o2 
+on o2.fingerprint = o.fingerprint
+distributed by(application); 
+
+
+
+
+
+
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="REFACTOR">market_mkt-outcomes_openings.sql</p> creates: ['analytics.opening_outcomes']</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "REFACTOR",
+ "PURPOSE": """Details about each opening in terms of number of invites, applicants, hires etc.""",
+ "NOTES": """Only has from Jan 2011 --- main query is slow. 
+             Needs some test cases. 
+   """,
+ "CREATES":["analytics.opening_outcomes"]
+}
+*/
+
+\i client_mkt-behavior_parent_openings.sql
+
+drop table if exists analytics.opening_outcomes; 
+create table analytics.opening_outcomes as 
+select 
+    economic_opening
+  , min(opening_date) as first_opening_date
+  , sum(case when odb_ja."Record ID#" is not null 
+    	     then 1 else 0 end) as total_apps_or_invites 
+  , sum(case when odb_ja."Record ID#" is not null and createdtype = 'client' 
+    	     then 1 else 0 end) as invites
+  , sum(case when odb_ja."Record ID#" is not null 
+    	     and createdtype = 'client' 
+	     and extract(hour from to_timestamp(odb_ja."Date Created"/1000) - opening_date) < 1.0 
+    	     then 1 else 0 
+	     end) as early_invites
+  , sum(case when odb_ja."Record ID#" is not null 
+    	     and createdtype = 'client' and invmc_dev_reply = 'accept' 
+    	     then 1 else 0 
+	     end) as accepted_invites 
+  , sum(case when odb_ja."Record ID#" is not null 
+    	     and createdtype = 'professional'  
+    	     then 1 else 0 
+	     end) as organic_applications 
+  , sum(case when odb_ja."Record ID#" is not null 
+    	     and createdtype = 'professional'  and ja.status = 'filled' 
+    	     then 1 else 0 
+	     end) as hired_organic_applicants 
+  , sum(case when odb_ja."Record ID#" is not null 
+    	     and createdtype = 'client'  and ja.status = 'filled' 
+    	     then 1 else 0 
+	     end) as hired_invited_applicants 
+  , sum(case when "Record ID#" is not null 
+    	     and createdtype = 'client' and dev.agency is not null 
+    	     then 1 else 0 
+	     end) as agency_invited_applicants
+  , sum(case when "Record ID#" is not null 
+    	     and createdtype = 'client' 
+	     and dev.agency is not null 
+	     and invmc_dev_reply='accept' 
+    	     then 1 else 0 end) as accepted_agency_invited_applicants
+  , sum(case when "Record ID#" is not null 
+    	     and createdtype = 'professional' 
+	     and dev.agency is not null 
+    	     then 1 else 0 end) as agency_organic_applicants 
+  , sum(case when "Record ID#" is not null 
+    	     and ja.status = 'filled' 
+	     and dev.agency is not null 
+    	     then 1 else 0 end) as hired_agency_applicants 
+  , sum(case when "Record ID#" is not null 
+    	     and ja.status = 'filled' 
+	     and ja.createdtype='professional' 
+	     and dev.agency is not null 
+    	     then 1 else 0 end) as hired_organic_agency_applicants 
+  , sum(case when "Record ID#" is not null 
+    	     and invmc_dev_reply='accept' 
+	     and invmc_comp_reply='accept' 
+    	     then 1 else 0 end) as num_interviews  
+  , sum(case when "Record ID#" is not null 
+    	     and hire_date is not null 
+	     and hire_date - opening_date < 7.0 
+	     then 1 else 0 end) as hires_first_7_days
+from analytics.parent_openings as o 
+left join agg.b_job_application as ja
+on ja.opening = o.opening 
+left join "oDesk DB"."JobApplications" as odb_ja
+on odb_ja."Record ID#" = ja.application 
+left join agg.b_contractor as dev
+on dev.contractor = ja.contractor 
+where opening_date > '2011-01-01' 
+group by economic_opening
+distributed by(economic_opening); 
+
+
+
+-- select 
+-- economic_opening 
+-- , opening 
+-- , hired_organic_applicants + hired_invited_applicants as jjh_hires
+-- , hires as agg_b_hires 			     			       
+-- from analytics.opening_outcomes as oo
+-- left join agg.b_opening as o
+-- on oo.economic_opening = o.opening
+-- where first_opening_date > '2012-09-01' 
+-- limit 100; 
+
+-- select 
+-- count(*)
+-- , sum(case when  agg_b_hires > jjh_hires then 1 else 0 end) as more_agg_than_jjh  
+-- , sum(case when  jjh_hires > agg_b_hires then 1 else 0 end) as more_jjh_than_agg  
+-- from 
+-- (select 
+-- economic_opening 
+-- , opening 
+-- , hired_organic_applicants + hired_invited_applicants as jjh_hires
+-- , hires as agg_b_hires 			     			       
+-- from analytics.opening_outcomes as oo
+-- left join agg.b_opening as o
+-- on oo.economic_opening = o.opening
+-- where first_opening_date > '2012-09-01') as foo 
+
+
+
+
+
+-- select 
+-- * 
+-- from 
+-- (select 
+-- economic_opening 
+-- , opening 
+-- , hired_organic_applicants + hired_invited_applicants as jjh_hires
+-- , hires as agg_b_hires 			     			       
+-- from analytics.opening_outcomes as oo
+-- left join agg.b_opening as o
+-- on oo.economic_opening = o.opening
+-- where first_opening_date > '2012-09-01' and first_opening_date < '2012-09-8') as 
+-- foo where agg_b_hires > jjh_hires limit 10; 
+
+
+
+
+-- -- select 
+-- -- month, 
+-- -- year, 
+-- -- sum(case when organic_applications > 0 and accepted_invites = 1 then 1 else 0 end) as exactly_one_accepted_invite
+-- -- from 
+-- -- (select 
+-- -- extract(month from first_opening_date) as month
+-- -- , extract(year from first_opening_date) as year
+-- -- , organic_applications
+-- -- , accepted_invites
+-- -- from analytics.opening_outcomes) as foo
+-- -- group by month, year
+-- -- order by year asc, month asc; 
+
+
+
+    </pre></div>
+    
+    <h3><a href="#"><p class="BAD">market_mkt-outcomes_volume.sql</p> creates: []</a></h3>
+    <div><pre>
+    /* 
+purpose: This query is designed to compute 
+aa_uri: http://askanalytics.odeskps.com/questions/260/marketplace-metrics-hours-worked-and-hourly-wage
+*/
+
+drop table if exists analytics.market_mkt_outcomes_1;
+create table analytics.market_mkt_outcomes_1 as
+select sum(aa.hours) as total_hours_worked , 
+       sum(aa.hr_charge) as sum_hr_charge,
+       sum(aa.hr_charge)/sum(aa.hours) as avg_wage,
+       dd.woe, 
+       dd.week_end 
+from agg.a_assignment aa
+join "oDesk DB".date_dim dd on dd.date = aa.date
+where dd.date >= now() - '3 months'::interval
+and aa.dept != 'MANAGED_SERVICES'
+group by 4,5
+order by 4,5;
+
+drop table if exists analytics.market_mkt_outcomes_2;
+create table analytics.market_mkt_outcomes_2 as
+select 
+sum(aa.hours) as total_hours_worked , 
+sum(aa.hr_charge) as sum_hr_charge,
+sum(aa.hr_charge)/sum(aa.hours) as avg_wage,
+dd.ym 
+from agg.a_assignment aa
+join "oDesk DB".date_dim dd on dd.date = aa.date
+where dd.date >= now() - '6 months'::interval
+and aa.dept != 'MANAGED_SERVICES'
+group by 4
+order by 4;
+
+    </pre></div>
+    
+    </div>
+     
+    <h1>utilities</h1>
+    <div id="utilities_accordion">
+    
+    <h3><a href="#"><p class="BAD">utilities_category_remap.sql</p> creates: []</a></h3>
+    <div><pre>
+    /*
+{
+ "AUTHOR": "John J. Horton",
+ "STATUS": "BAD", 
+ "PURPOSE": """ """, 
+ "NOTES": """ """,
+ "CREATES":[]
+}
+*/
+
+
+
+
+
+
+
+
+
+    </pre></div>
+    
+    </div>
+    </body></html>

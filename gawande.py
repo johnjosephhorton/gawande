@@ -25,13 +25,11 @@ def main():
     parser.add_argument("--pdf",
                         action="store_true",
                         default=False,
-                        help="Create a pdf of the checklist/
- in the current directory")
+                        help="Create a pdf of the checklist in the current directory")
     parser.add_argument("--md",
                         action="store_true",
                         default=False,
-                        help="Store a markdown of the/
-                              checklist in the current directory")
+                        help="Store a markdown of the checklist in the current directory")
     args = parser.parse_args()
     if args.checklist:
         checklist_name = args.checklist

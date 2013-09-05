@@ -25,13 +25,11 @@ def main():
     parser.add_argument("--pdf",
                         action="store_true",
                         default=False,
-                        help="Create a pdf of the checklist/
- in the current directory")
+                        help="Create a pdf of the checklist in the current directory")
     parser.add_argument("--md",
                         action="store_true",
                         default=False,
-                        help="Store a markdown of the/
-                              checklist in the current directory")
+                        help="Store a markdown of the checklist in the current directory")
     args = parser.parse_args()
     if args.checklist:
         checklist_name = args.checklist
@@ -40,7 +38,7 @@ def main():
             f = open("%s.md" % checklist_name, "w")
             f.write(checklist_text)
             f.close()
-            os.system("pandoc -o %s.pdf %s.md" % (checklist_name.
+            os.system("pandoc -o %s.pdf %s.md" % (checklist_name,
                                                   checklist_name))
             print("Wrote %s.pdf in current directory" % checklist_name)
             if args.md:
